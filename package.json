@@ -1,0 +1,51 @@
+{
+  "name": "moxt-ai-team-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "author": "Moxt",
+  "description": "A local-first runtime for coordinating real coding agents across workspaces.",
+  "main": "out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/utils": "^3.0.0",
+    "better-sqlite3": "^12.2.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^9.0.1",
+    "zod": "^3.24.1",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^3.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  },
+  "build": {
+    "appId": "ai.moxt.runtime",
+    "productName": "Moxt",
+    "asar": true,
+    "files": ["out/**/*", "package.json"],
+    "mac": { "target": ["dmg", "zip"], "category": "public.app-category.developer-tools" },
+    "win": { "target": ["nsis"] },
+    "linux": { "target": ["AppImage", "deb"], "category": "Development" }
+  }
+}

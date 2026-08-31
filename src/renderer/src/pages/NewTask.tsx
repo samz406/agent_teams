@@ -1,0 +1,38 @@
+import { useMemo, useState } from 'react'
+import { ArrowLeft, ArrowRight, Bot, Check, CheckCircle2, FolderGit2, LoaderCircle, Plus, ShieldCheck, Sparkles } from 'lucide-react'
+import type { WorkflowType } from '../../../shared/contracts'
+import { WORKFLOW_LABELS, WORKFLOWS } from '../../../shared/workflows'
+import { errorText, useAppStore } from '../store'
+
+export default function NewTask({ onCreated }: { onCreated(id: string): void }): import('react').JSX.Element {
+  const { snapshot, notify } = useAppStore()
+  const [step, setStep] = useState(1)
+  const [workflow, setWorkflow] = useState<WorkflowType>('cross-project')
+  const [form, setForm] = useState({ title: '', description: '', priority: 'P1' as const, dueDate: '', tags: '' })
+  const [workspaceIds, setWorkspaceIds] = useState<string[]>([])
+  const [agentIds, setAgentIds] = useState<string[]>(snapshot.agents.slice(0, 4).map(a => a.id))
+  const [creating, setCreating] = useState(false)
+  const valid = useMemo(() => form.title.trim() && form.description.trim() && workspaceIds.length && agentIds.length, [form, workspaceIds, agentIds])
+  async function addWorkspace(): Promise<void> { const value = await window.moxt.selectWorkspace(); if (value) setWorkspaceIds(ids => [...new Set([...ids, value.id])]) }
+  async function create(): Promise<void> {
+    setCreating(true)
+    try {
+      const value = await window.moxt.createChange({ title: form.title, description: form.description, workflowType: workflow, priority: form.priority, dueDate: form.dueDate || null, workspaceIds, agentIds, tags: form.tags.split(',').map(x => x.trim()).filter(Boolean) })
+      notify('success', '任务初始化完成，团队已就绪')
+      onCreated(value.id)
+    } catch (error) { notify('error', errorText(error)) } finally { setCreating(false) }
+  }
+  return <section className="page new-task">
+    <header className="page-header"><div><h1>新建任务</h1><p>从目标、Workflow、Workspace 到 Agent Team，一次完成真实执行准备。</p></div><div className="stepper">{['协作模式', '任务信息', 'Workspace', 'Agent', '确认'].map((label, i) => <span className={step >= i + 1 ? 'on' : ''} key={label}><b>{step > i + 1 ? <Check/> : i + 1}</b>{label}</span>)}</div></header>
+    <div className="wizard-card">
+      {step === 1 && <><div className="wizard-heading"><Sparkles/><div><h2>选择协作模式</h2><p>Workflow 定义责任、交付物与 Gate；Leader 决定具体执行顺序。</p></div></div><div className="workflow-choice">{Object.entries(WORKFLOW_LABELS).map(([key, item]) => <button className={workflow === key ? 'selected' : ''} onClick={() => setWorkflow(key as WorkflowType)} key={key}><span className="choice-icon"><ShieldCheck/></span><div><h3>{item.name}</h3><p>{item.description}</p><div className="phase-chips">{WORKFLOWS[key as WorkflowType].slice(0, 5).map(p => <i key={p.id}>{p.name}</i>)}</div></div>{workflow === key && <CheckCircle2 className="selected-check"/>}</button>)}</div></>}
+      {step === 2 && <><div className="wizard-heading"><CheckCircle2/><div><h2>填写任务基本信息</h2><p>让团队理解目标、边界与完成标准，而不只是一句模糊指令。</p></div></div><div className="form-grid"><label className="full">任务标题<input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="例如：GF 接入 DE ExternalCallback Adapter"/></label><label className="full">任务描述<textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="说明业务目标、约束、预期交付物和不可修改范围…"/></label><label>优先级<select value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value as typeof form.priority })}><option>P0 紧急</option><option value="P1">P1 高</option><option value="P2">P2 中</option><option value="P3">P3 低</option></select></label><label>目标交付时间<input type="date" value={form.dueDate} onChange={e => setForm({ ...form, dueDate: e.target.value })}/></label><label className="full">标签<input value={form.tags} onChange={e => setForm({ ...form, tags: e.target.value })} placeholder="integration, callback（逗号分隔）"/></label></div></>}
+      {step === 3 && <><div className="wizard-heading"><FolderGit2/><div><h2>挂载真实 Workspace</h2><p>选择本机项目目录。Moxt 会读取 Git 分支和基线 Commit，不会上传源码。</p></div></div><button className="drop-zone" onClick={() => void addWorkspace()}><FolderGit2/><h3>添加本地项目目录</h3><p>支持普通目录或 Git Repository</p><span><Plus/>选择目录</span></button><div className="selection-list">{snapshot.workspaces.filter(w => workspaceIds.includes(w.id)).map(w => <div key={w.id}><FolderGit2/><div><strong>{w.name}</strong><span>{w.path}</span></div><b>{w.branch || '非 Git'}</b><button onClick={() => setWorkspaceIds(ids => ids.filter(id => id !== w.id))}>移除</button></div>)}</div></>}
+      {step === 4 && <><div className="wizard-heading"><Bot/><div><h2>选择 / 添加 Agent</h2><p>Agent 是责任角色，背后绑定本机真实 CLI Runtime。</p></div></div><div className="agent-choice">{snapshot.agents.map(agent => <button className={agentIds.includes(agent.id) ? 'selected' : ''} onClick={() => setAgentIds(ids => ids.includes(agent.id) ? ids.filter(id => id !== agent.id) : [...ids, agent.id])} key={agent.id}><span className="agent-avatar">{agent.icon}</span><div><h3>{agent.name}</h3><p>{agent.responsibility}</p><small>{agent.runtime} · {agent.permissions.write ? 'RW' : 'R'}</small></div>{agentIds.includes(agent.id) && <CheckCircle2/>}</button>)}</div></>}
+      {step === 5 && <><div className="wizard-heading"><ShieldCheck/><div><h2>确认并创建</h2><p>创建后会保存任务、Workflow、Workspace 和 Session Team，再进入 Team Chat。</p></div></div><div className="review-grid"><Review label="任务" value={form.title}/><Review label="模式" value={WORKFLOW_LABELS[workflow].name}/><Review label="优先级" value={form.priority}/><Review label="Workspace" value={`${workspaceIds.length} 个`}/><Review label="参与 Agent" value={`${agentIds.length} 个`}/><Review label="人工 Gate" value={`${WORKFLOWS[workflow].filter(p => p.humanMode === 'IN_LOOP').length} 个强 Gate`}/></div><div className="init-note"><LoaderCircle/><div><strong>创建后会做什么？</strong><p>持久化 Change → 校验 Workspace → 绑定 Agent Runtime → 建立 Workflow → 进入 Team Chat。Agent 只会在收到任务后调用真实 CLI。</p></div></div></>}
+      <footer className="wizard-footer"><button className="secondary" disabled={step === 1} onClick={() => setStep(s => s - 1)}><ArrowLeft/>上一步</button>{step < 5 ? <button className="primary" disabled={step === 2 && (!form.title || !form.description) || step === 3 && !workspaceIds.length || step === 4 && !agentIds.length} onClick={() => setStep(s => s + 1)}>下一步<ArrowRight/></button> : <button className="primary" disabled={!valid || creating} onClick={() => void create()}>{creating ? <LoaderCircle className="spin"/> : <Check/>}创建任务</button>}</footer>
+    </div>
+  </section>
+}
+
+function Review({ label, value }: { label: string; value: string }): import('react').JSX.Element { return <div><span>{label}</span><strong>{value || '—'}</strong></div> }
