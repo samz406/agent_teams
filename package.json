@@ -8,13 +8,15 @@
   "type": "module",
   "scripts": {
     "postinstall": "electron-builder install-app-deps",
-    "dev": "electron-builder install-app-deps && electron-vite dev",
+    "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
+    "dev": "npm run rebuild:electron && electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "test": "npm rebuild better-sqlite3 && vitest run",
     "typecheck": "tsc --noEmit",
-    "package": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "package": "npm run rebuild:electron && npm run build && electron-builder --dir",
+    "smoke:runtime": "npm run rebuild:electron && npm run build && electron scripts/runtime-smoke.mjs --no-sandbox --ozone-platform=headless --disable-gpu",
+    "dist": "npm run rebuild:electron && npm run build && electron-builder"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

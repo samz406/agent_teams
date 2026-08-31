@@ -11,6 +11,7 @@ const api: DesktopApi = {
   advanceWorkflow: changeId => ipcRenderer.invoke('workflow:advance', changeId),
   approveArtifact: (artifactId, approve, feedback) => ipcRenderer.invoke('artifact:approve', artifactId, approve, feedback),
   detectRuntimes: () => ipcRenderer.invoke('runtime:detect'),
+  updateIssue: (issueId, status, resolution) => ipcRenderer.invoke('issue:update', issueId, status, resolution),
   onRuntimeEvent: listener => {
     const handler = (_event: Electron.IpcRendererEvent, payload: RuntimeEvent): void => listener(payload)
     ipcRenderer.on('runtime:event', handler)

@@ -6,18 +6,19 @@
 |---|---|---|
 | 真实 CLI Worker | 已实现 | Claude/Codex/OpenCode/pi 自动检测，Custom executable；spawn 真实进程并保存原始输出、Exit Code、Session ID |
 | 自定义 Agent | 已实现 | 名称、责任、质量标准、Runtime、权限、Workspace Scope 数据模型与创建页 |
-| 多 Workspace / 并行 Run | 已实现 | 一个 Change 可挂多个目录；RunManager 用独立 Child Process 并行执行，事件按 Run 隔离 |
-| Session、Run、Evidence | 已实现 | SQLite 持久化；Chat 正式回复绑定 Run；Inspector 下钻 Transcript、Command、Git、Diff、Files |
-| Agent → Agent | 已实现 | 真实 Final Response 中的 `team-actions` 产生目标 Agent 新 Run，最多并行三项 |
-| No Fake Completion | 已实现 | Runtime `COMPLETED` 只表示 CLI 退出；Workflow 不自动推进，测试文本只记为 UNVERIFIED |
+| 独立 Runtime / Adapter | 已实现 | Electron Utility Process 托管 DB、Adapter 和真实 CLI；Main 只做代理；五类 Adapter 有统一启动、恢复、终止和解析契约 |
+| 多 Workspace / 并发队列 | 已实现 | 一个 Change 可挂多个目录；全局 RuntimeQueue 限制最多三个活动 Run，队列支持取消且事件按 Run 隔离 |
+| Session、Run、Evidence | 已实现 | AgentSession 保存原生 Session ID；Claude/Codex/OpenCode 可原生 Resume；Inspector 下钻 Command、Git、Diff、Test 与 Runtime Evidence |
+| Agent → Agent | 已实现 | 真实 Final Response 中的 `team-actions` 只可委派当前 Team，产生结构化 Task、Handoff 和真实 Worker Run |
+| No Fake Completion | 已实现 | `RUN_COMPLETED` 进入 VERIFYING；Leader 按阶段验证 PASS Evidence，不满足则 REWORK 并创建 Blocking Issue |
 | Human Override | 已实现 | Pause/Stop 作用于真实进程；Resume/Retry 创建 Parent Run 并保留现场和旧证据 |
 | 五种 Workflow | 已实现 | 阶段、Goal、Deliverable、Exit Criteria、Human Mode 预置并可视化 |
 | Human Gate / Artifact Current Truth | 已实现 | IN_LOOP 阶段未批准 Artifact 时拒绝推进；新版本可 supersede 旧版本 |
-| 崩溃恢复 | 已实现 | 启动时将残留活动 Run 事务性标记 INTERRUPTED；Chat/Run/Artifact 不丢失 |
-| Git Worktree 隔离 | 数据模型/方案已保留，自动创建未完成 | 发布前需实现每个写 Agent 的独立 Branch/Worktree 与安全回收 |
-| 独立 QA 强约束 | Workflow 已实现，身份级自动校验未完成 | Bug Fix E2E 需阻止实现 Agent 作为最终 Verifier |
-| Integration Case / Handoff / Issue | Workflow/Artifact 可承载，结构化实体未完成 | 跨项目 E2E 需补 Case、Owner、Fix、Retest 和正式 Handoff 状态 |
-| 发布 Go/No-Go 阻塞规则 | Workflow Gate 已实现，Evidence 依赖图未完成 | Blocking FAIL 必须在领域规则层阻止 Go，而不只依赖人工 Gate |
+| 崩溃恢复 | 已实现 | 启动时事务性标记残留 Run 为 INTERRUPTED、Session 为 INTERRUPTED、Task/Workstream 为 BLOCKED，Chat/Artifact/Evidence 不丢失 |
+| 协作领域模型 | 已实现 | Task、Workstream、AgentSession、Handoff、Issue、HumanIntervention 均为 SQLite 实体并进入统一 Snapshot |
+| Git Worktree 隔离 | 已实现 | 写 Binding 强制 Git Workspace，并按 Change/Agent 创建持久 Branch/Worktree；越界路径与非 Git 写入均拒绝 |
+| 独立 QA 强约束 | 已实现 | Bug Fix Verify 阶段在验收和推进两层拒绝实现 Agent 作为最终 Verifier |
+| 发布 Go/No-Go 阻塞规则 | 已实现 | 未解决 Blocking Issue 在领域层阻止任何阶段推进；测试/Runtime FAIL 不能满足 Evidence Gate |
 | 跨平台安装包 | 构建配置已完成 | macOS arm64/x64、Windows x64、Linux x64 需分别在目标 Runner 重建 Native Module 并签名验收 |
 
 ## 已自动验证
@@ -25,7 +26,9 @@
 - TypeScript 严格类型检查；Electron Main、Preload、Renderer 生产构建。
 - 五种 Workflow 完整性、Human Gate、阶段投影单元测试。
 - CLI JSONL 的 Session/Final Response 解析和 Agent 委派协议单元测试。
-- SQLite Change/Message/Artifact 审批恢复集成测试。
+- SQLite 协作模型与异常恢复集成测试。
+- RuntimeQueue 并发/取消、真实 Git Worktree 隔离、Leader Evidence 验收/返工测试。
+- 构建后 Electron Utility Process 冒烟测试，验证独立 Runtime 可启动并返回完整 Snapshot Contract。
 - GitHub Actions 在 push / pull request 时自动执行安装、测试、类型检查和生产构建。
 
 ## 发布前真实 E2E

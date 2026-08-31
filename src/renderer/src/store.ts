@@ -11,7 +11,7 @@ interface AppState {
   notify(type: 'success' | 'error', text: string): void
 }
 
-const empty: AppSnapshot = { changes: [], agents: [], workspaces: [], runtimes: [], messages: [], runs: [], artifacts: [] }
+const empty: AppSnapshot = { changes: [], agents: [], workspaces: [], runtimes: [], messages: [], runs: [], artifacts: [], bindings: [], workstreams: [], tasks: [], agentSessions: [], handoffs: [], issues: [], interventions: [] }
 
 export const useAppStore = create<AppState>((set) => ({
   snapshot: empty,

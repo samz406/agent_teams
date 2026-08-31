@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { Agent, AppSnapshot, Artifact, Change, CreateAgentInput, CreateChangeInput, Evidence, Message, Run, RuntimeInfo, Workspace } from '../shared/contracts'
+import type { Agent, AgentSession, AgentWorkspaceBinding, AppSnapshot, Artifact, Change, CreateAgentInput, CreateChangeInput, Evidence, Handoff, HumanIntervention, Issue, IssueStatus, Message, Run, RuntimeInfo, Task, TaskStatus, Workspace, Workstream } from '../shared/contracts'
 
 const now = (): string => new Date().toISOString()
 const json = (value: unknown): string => JSON.stringify(value)
@@ -47,6 +47,7 @@ export class AppDatabase {
       );
       CREATE TABLE IF NOT EXISTS t_run (
         id TEXT PRIMARY KEY, change_id TEXT NOT NULL, agent_id TEXT NOT NULL, parent_run_id TEXT,
+        task_id TEXT, agent_session_id TEXT,
         status TEXT NOT NULL, prompt TEXT NOT NULL, runtime TEXT NOT NULL, executable TEXT NOT NULL,
         workspace_path TEXT NOT NULL, started_at TEXT, ended_at TEXT, exit_code INTEGER,
         session_id TEXT, stdout TEXT NOT NULL DEFAULT '', stderr TEXT NOT NULL DEFAULT '',
@@ -68,20 +69,73 @@ export class AppDatabase {
         id TEXT PRIMARY KEY, aggregate_type TEXT NOT NULL, aggregate_id TEXT NOT NULL,
         event_type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS t_agent_workspace (
+        id TEXT PRIMARY KEY, change_id TEXT NOT NULL, agent_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+        permissions TEXT NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE(change_id, agent_id, workspace_id)
+      );
+      CREATE TABLE IF NOT EXISTS t_workstream (
+        id TEXT PRIMARY KEY, change_id TEXT NOT NULL, workspace_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+        name TEXT NOT NULL, status TEXT NOT NULL, worktree_path TEXT, branch TEXT, base_commit TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS t_task (
+        id TEXT PRIMARY KEY, change_id TEXT NOT NULL, workstream_id TEXT, phase_id TEXT NOT NULL,
+        title TEXT NOT NULL, description TEXT NOT NULL, assigned_agent_id TEXT NOT NULL,
+        verifier_agent_id TEXT, status TEXT NOT NULL, required_evidence TEXT NOT NULL,
+        current_run_id TEXT, parent_task_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS t_agent_session (
+        id TEXT PRIMARY KEY, change_id TEXT NOT NULL, agent_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+        native_session_id TEXT, runtime TEXT NOT NULL, status TEXT NOT NULL, summary TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE(change_id, agent_id, workspace_id)
+      );
+      CREATE TABLE IF NOT EXISTS t_handoff (
+        id TEXT PRIMARY KEY, change_id TEXT NOT NULL, from_task_id TEXT, from_agent_id TEXT,
+        to_task_id TEXT, to_agent_id TEXT, deliverable TEXT NOT NULL, evidence_ids TEXT NOT NULL,
+        status TEXT NOT NULL, created_at TEXT NOT NULL, accepted_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS t_issue (
+        id TEXT PRIMARY KEY, change_id TEXT NOT NULL, task_id TEXT, owner_agent_id TEXT,
+        title TEXT NOT NULL, description TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL,
+        source_evidence_id TEXT, resolution TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS t_human_intervention (
+        id TEXT PRIMARY KEY, change_id TEXT NOT NULL, target_agent_id TEXT, affected_run_id TEXT,
+        reason TEXT NOT NULL, new_constraints TEXT NOT NULL, operator TEXT NOT NULL, created_at TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_message_change ON t_message(change_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_run_change ON t_run(change_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_event_aggregate ON t_event(aggregate_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_task_change_phase ON t_task(change_id, phase_id, status);
+      CREATE INDEX IF NOT EXISTS idx_issue_change ON t_issue(change_id, status, severity);
+      CREATE INDEX IF NOT EXISTS idx_session_agent ON t_agent_session(change_id, agent_id);
     `)
+    this.ensureColumn('t_run', 'task_id', 'TEXT')
+    this.ensureColumn('t_run', 'agent_session_id', 'TEXT')
+  }
+
+  private ensureColumn(table: string, column: string, type: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+    if (!columns.some(item => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
   }
 
   private recoverInterruptedRuns(): void {
-    const affected = this.db.prepare("SELECT id FROM t_run WHERE status IN ('QUEUED','STARTING','RUNNING')").all() as { id: string }[]
+    const affected = this.db.prepare("SELECT id, task_id, agent_session_id FROM t_run WHERE status IN ('QUEUED','STARTING','RUNNING')").all() as Array<{ id: string; task_id: string | null; agent_session_id: string | null }>
+    const recoveredAt = now()
     const tx = this.db.transaction(() => {
       for (const row of affected) {
-        this.db.prepare("UPDATE t_run SET status='INTERRUPTED', ended_at=? WHERE id=?").run(now(), row.id)
+        this.db.prepare("UPDATE t_run SET status='INTERRUPTED', ended_at=? WHERE id=?").run(recoveredAt, row.id)
+        if (row.task_id) {
+          this.db.prepare("UPDATE t_task SET status='BLOCKED', updated_at=? WHERE id=? AND status IN ('ASSIGNED','QUEUED','RUNNING','RUN_COMPLETED','VERIFYING')").run(recoveredAt, row.task_id)
+          this.event('task', row.task_id, 'TASK_BLOCKED', { reason: 'Runtime process restarted while Task was active', runId: row.id })
+        }
+        if (row.agent_session_id) this.db.prepare("UPDATE t_agent_session SET status='INTERRUPTED', updated_at=? WHERE id=?").run(recoveredAt, row.agent_session_id)
         this.event('run', row.id, 'RUN_INTERRUPTED', { reason: 'Application restarted while run was active' })
       }
       this.db.prepare("UPDATE t_agent SET status='IDLE', current_run_id=NULL WHERE status='RUNNING'").run()
+      this.db.prepare("UPDATE t_workstream SET status='BLOCKED', updated_at=? WHERE id IN (SELECT DISTINCT workstream_id FROM t_task WHERE status='BLOCKED' AND workstream_id IS NOT NULL)").run(recoveredAt)
     })
     tx()
   }
@@ -106,7 +160,14 @@ export class AppDatabase {
       runtimes,
       messages: (this.db.prepare('SELECT * FROM t_message ORDER BY created_at').all() as Record<string, unknown>[]).map(mapMessage),
       runs: (this.db.prepare('SELECT * FROM t_run ORDER BY created_at DESC').all() as Record<string, unknown>[]).map(row => this.mapRun(row)),
-      artifacts: (this.db.prepare('SELECT * FROM t_artifact ORDER BY created_at DESC').all() as Record<string, unknown>[]).map(mapArtifact)
+      artifacts: (this.db.prepare('SELECT * FROM t_artifact ORDER BY created_at DESC').all() as Record<string, unknown>[]).map(mapArtifact),
+      bindings: (this.db.prepare('SELECT * FROM t_agent_workspace ORDER BY created_at').all() as Record<string, unknown>[]).map(mapBinding),
+      workstreams: (this.db.prepare('SELECT * FROM t_workstream ORDER BY created_at').all() as Record<string, unknown>[]).map(mapWorkstream),
+      tasks: (this.db.prepare('SELECT * FROM t_task ORDER BY created_at').all() as Record<string, unknown>[]).map(mapTask),
+      agentSessions: (this.db.prepare('SELECT * FROM t_agent_session ORDER BY created_at').all() as Record<string, unknown>[]).map(mapAgentSession),
+      handoffs: (this.db.prepare('SELECT * FROM t_handoff ORDER BY created_at').all() as Record<string, unknown>[]).map(mapHandoff),
+      issues: (this.db.prepare('SELECT * FROM t_issue ORDER BY created_at').all() as Record<string, unknown>[]).map(mapIssue),
+      interventions: (this.db.prepare('SELECT * FROM t_human_intervention ORDER BY created_at').all() as Record<string, unknown>[]).map(mapIntervention)
     }
   }
 
@@ -136,6 +197,12 @@ export class AppDatabase {
       this.db.prepare(`INSERT INTO t_change (id,number,title,description,workflow_type,priority,due_date,status,current_phase,workspace_ids,agent_ids,tags,created_at,updated_at)
         VALUES (@id,@number,@title,@description,@workflowType,@priority,@dueDate,@status,@currentPhase,@workspaceIds,@agentIds,@tags,@createdAt,@updatedAt)`)
         .run({ ...value, workspaceIds: json(value.workspaceIds), agentIds: json(value.agentIds), tags: json(value.tags) })
+      for (const binding of input.agentBindings) {
+        const id = randomUUID()
+        this.db.prepare('INSERT INTO t_agent_workspace VALUES (?,?,?,?,?,?)').run(id, value.id, binding.agentId, binding.workspaceId, json(binding.permissions), time)
+        const workspace = this.getWorkspace(binding.workspaceId)
+        this.db.prepare('INSERT INTO t_workstream VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(randomUUID(), value.id, binding.workspaceId, binding.agentId, `${workspace?.name ?? 'Workspace'} · ${binding.agentId.slice(0, 6)}`, 'READY', null, null, workspace?.baseCommit ?? null, time, time)
+      }
       this.addMessage(value.id, 'system', null, 'System', `任务 #${number} 已创建。Workspace 与 Agent 已就绪，当前进入 Discovery。`, null)
       this.event('change', value.id, 'CHANGE_CREATED', value)
     })
@@ -167,8 +234,8 @@ export class AppDatabase {
 
   createRun(value: Run): void {
     const tx = this.db.transaction(() => {
-      this.db.prepare(`INSERT INTO t_run (id,change_id,agent_id,parent_run_id,status,prompt,runtime,executable,workspace_path,started_at,ended_at,exit_code,session_id,stdout,stderr,final_response,base_commit,retry_reason,created_at)
-        VALUES (@id,@changeId,@agentId,@parentRunId,@status,@prompt,@runtime,@executable,@workspacePath,@startedAt,@endedAt,@exitCode,@sessionId,@stdout,@stderr,@finalResponse,@baseCommit,@retryReason,@createdAt)`)
+      this.db.prepare(`INSERT INTO t_run (id,change_id,agent_id,parent_run_id,task_id,agent_session_id,status,prompt,runtime,executable,workspace_path,started_at,ended_at,exit_code,session_id,stdout,stderr,final_response,base_commit,retry_reason,created_at)
+        VALUES (@id,@changeId,@agentId,@parentRunId,@taskId,@agentSessionId,@status,@prompt,@runtime,@executable,@workspacePath,@startedAt,@endedAt,@exitCode,@sessionId,@stdout,@stderr,@finalResponse,@baseCommit,@retryReason,@createdAt)`)
         .run({ ...value, createdAt: now() })
       this.db.prepare("UPDATE t_agent SET status='RUNNING', current_run_id=? WHERE id=?").run(value.id, value.agentId)
       this.event('run', value.id, 'RUN_QUEUED', { changeId: value.changeId, agentId: value.agentId })
@@ -191,6 +258,84 @@ export class AppDatabase {
   getRun(id: string): Run | undefined {
     const row = this.db.prepare('SELECT * FROM t_run WHERE id=?').get(id) as Record<string, unknown> | undefined
     return row ? this.mapRun(row) : undefined
+  }
+
+  getBinding(changeId: string, agentId: string): AgentWorkspaceBinding | undefined {
+    const row = this.db.prepare('SELECT * FROM t_agent_workspace WHERE change_id=? AND agent_id=? ORDER BY created_at LIMIT 1').get(changeId, agentId) as Record<string, unknown> | undefined
+    return row ? mapBinding(row) : undefined
+  }
+
+  getWorkstream(changeId: string, agentId: string, workspaceId?: string): Workstream | undefined {
+    const row = (workspaceId
+      ? this.db.prepare('SELECT * FROM t_workstream WHERE change_id=? AND agent_id=? AND workspace_id=? LIMIT 1').get(changeId, agentId, workspaceId)
+      : this.db.prepare('SELECT * FROM t_workstream WHERE change_id=? AND agent_id=? ORDER BY created_at LIMIT 1').get(changeId, agentId)) as Record<string, unknown> | undefined
+    return row ? mapWorkstream(row) : undefined
+  }
+
+  updateWorkstream(id: string, patch: Partial<Pick<Workstream, 'status' | 'worktreePath' | 'branch' | 'baseCommit'>>): void {
+    const map: Record<string, string> = { status: 'status', worktreePath: 'worktree_path', branch: 'branch', baseCommit: 'base_commit' }
+    const fields: string[] = []; const values: Record<string, unknown> = { id, updatedAt: now() }
+    for (const [key, value] of Object.entries(patch)) { fields.push(`${map[key]}=@${key}`); values[key] = value }
+    if (fields.length) this.db.prepare(`UPDATE t_workstream SET ${fields.join(',')},updated_at=@updatedAt WHERE id=@id`).run(values)
+  }
+
+  createTask(input: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>): Task {
+    const time = now(); const value: Task = { ...input, id: randomUUID(), createdAt: time, updatedAt: time }
+    this.db.prepare(`INSERT INTO t_task VALUES (@id,@changeId,@workstreamId,@phaseId,@title,@description,@assignedAgentId,@verifierAgentId,@status,@requiredEvidence,@currentRunId,@parentTaskId,@createdAt,@updatedAt)`)
+      .run({ ...value, requiredEvidence: json(value.requiredEvidence) })
+    this.event('task', value.id, 'TASK_CREATED', value)
+    return value
+  }
+
+  getTask(id: string): Task | undefined { const row = this.db.prepare('SELECT * FROM t_task WHERE id=?').get(id) as Record<string, unknown> | undefined; return row ? mapTask(row) : undefined }
+
+  getPhaseTasks(changeId: string, phaseId: string): Task[] { return (this.db.prepare('SELECT * FROM t_task WHERE change_id=? AND phase_id=? ORDER BY created_at').all(changeId, phaseId) as Record<string, unknown>[]).map(mapTask) }
+  findReworkTask(changeId: string, phaseId: string, agentId: string): Task | undefined { const row = this.db.prepare("SELECT * FROM t_task WHERE change_id=? AND phase_id=? AND assigned_agent_id=? AND status IN ('REWORK','BLOCKED') ORDER BY updated_at DESC LIMIT 1").get(changeId, phaseId, agentId) as Record<string, unknown> | undefined; return row ? mapTask(row) : undefined }
+
+  updateTask(id: string, status: TaskStatus, currentRunId?: string | null, verifierAgentId?: string | null): void {
+    this.db.prepare('UPDATE t_task SET status=?, current_run_id=COALESCE(?,current_run_id), verifier_agent_id=COALESCE(?,verifier_agent_id), updated_at=? WHERE id=?').run(status, currentRunId ?? null, verifierAgentId ?? null, now(), id)
+    this.event('task', id, `TASK_${status}`, { currentRunId, verifierAgentId })
+  }
+
+  ensureAgentSession(changeId: string, agentId: string, workspaceId: string, runtime: AgentSession['runtime']): AgentSession {
+    const existing = this.db.prepare('SELECT * FROM t_agent_session WHERE change_id=? AND agent_id=? AND workspace_id=?').get(changeId, agentId, workspaceId) as Record<string, unknown> | undefined
+    if (existing) return mapAgentSession(existing)
+    const time = now(); const value: AgentSession = { id: randomUUID(), changeId, agentId, workspaceId, nativeSessionId: null, runtime, status: 'ACTIVE', summary: null, createdAt: time, updatedAt: time }
+    this.db.prepare('INSERT INTO t_agent_session VALUES (@id,@changeId,@agentId,@workspaceId,@nativeSessionId,@runtime,@status,@summary,@createdAt,@updatedAt)').run(value)
+    return value
+  }
+
+  updateAgentSession(id: string, nativeSessionId: string | null, status: AgentSession['status'], summary?: string | null): void {
+    this.db.prepare('UPDATE t_agent_session SET native_session_id=COALESCE(?,native_session_id),status=?,summary=COALESCE(?,summary),updated_at=? WHERE id=?').run(nativeSessionId, status, summary ?? null, now(), id)
+  }
+
+  createHandoff(input: Omit<Handoff, 'id' | 'createdAt' | 'acceptedAt' | 'status'>): Handoff {
+    const value: Handoff = { ...input, id: randomUUID(), status: 'CREATED', createdAt: now(), acceptedAt: null }
+    this.db.prepare('INSERT INTO t_handoff VALUES (@id,@changeId,@fromTaskId,@fromAgentId,@toTaskId,@toAgentId,@deliverable,@evidenceIds,@status,@createdAt,@acceptedAt)').run({ ...value, evidenceIds: json(value.evidenceIds) })
+    this.event('handoff', value.id, 'HANDOFF_CREATED', value); return value
+  }
+
+  createIssue(input: Omit<Issue, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'resolution'>): Issue {
+    const time = now(); const value: Issue = { ...input, id: randomUUID(), status: 'OPEN', resolution: null, createdAt: time, updatedAt: time }
+    this.db.prepare('INSERT INTO t_issue VALUES (@id,@changeId,@taskId,@ownerAgentId,@title,@description,@severity,@status,@sourceEvidenceId,@resolution,@createdAt,@updatedAt)').run(value)
+    this.event('issue', value.id, 'ISSUE_CREATED', value); return value
+  }
+
+  updateIssue(id: string, status: IssueStatus, resolution?: string): void { this.db.prepare('UPDATE t_issue SET status=?,resolution=COALESCE(?,resolution),updated_at=? WHERE id=?').run(status, resolution ?? null, now(), id); this.event('issue', id, `ISSUE_${status}`, { resolution }) }
+  resolveTaskIssues(taskId: string, resolution: string): void { this.db.prepare("UPDATE t_issue SET status='RESOLVED',resolution=?,updated_at=? WHERE task_id=? AND status IN ('OPEN','FIXING')").run(resolution, now(), taskId) }
+  hasBlockingIssues(changeId: string): boolean { return Boolean(this.db.prepare("SELECT 1 FROM t_issue WHERE change_id=? AND severity='BLOCKING' AND status NOT IN ('RESOLVED','VERIFIED','WONT_FIX') LIMIT 1").get(changeId)) }
+
+  addIntervention(input: Omit<HumanIntervention, 'id' | 'createdAt'>): HumanIntervention {
+    const value: HumanIntervention = { ...input, id: randomUUID(), createdAt: now() }
+    this.db.prepare('INSERT INTO t_human_intervention VALUES (@id,@changeId,@targetAgentId,@affectedRunId,@reason,@newConstraints,@operator,@createdAt)').run(value)
+    this.event('change', value.changeId, 'HUMAN_INTERVENTION', value); return value
+  }
+
+  findActiveRun(changeId: string, agentId: string): Run | undefined { const row = this.db.prepare("SELECT * FROM t_run WHERE change_id=? AND agent_id=? AND status IN ('QUEUED','STARTING','RUNNING') ORDER BY created_at DESC LIMIT 1").get(changeId, agentId) as Record<string, unknown> | undefined; return row ? this.mapRun(row) : undefined }
+
+  updateChangeState(changeId: string, status: Change['status'], phase?: number): void {
+    this.db.prepare('UPDATE t_change SET status=?,current_phase=COALESCE(?,current_phase),updated_at=? WHERE id=?').run(status, phase ?? null, now(), changeId)
+    this.event('change', changeId, `CHANGE_${status}`, { phase })
   }
 
   addEvidence(runId: string, input: Omit<Evidence, 'id' | 'runId' | 'createdAt'>): Evidence {
@@ -229,7 +374,7 @@ export class AppDatabase {
 
   private mapRun(row: Record<string, unknown>): Run {
     const evidence = (this.db.prepare('SELECT * FROM t_evidence WHERE run_id=? ORDER BY created_at').all(String(row.id)) as Record<string, unknown>[]).map(mapEvidence)
-    return { id: String(row.id), changeId: String(row.change_id), agentId: String(row.agent_id), parentRunId: nullable(row.parent_run_id), status: row.status as Run['status'], prompt: String(row.prompt), runtime: row.runtime as Run['runtime'], executable: String(row.executable), workspacePath: String(row.workspace_path), startedAt: nullable(row.started_at), endedAt: nullable(row.ended_at), exitCode: row.exit_code === null ? null : Number(row.exit_code), sessionId: nullable(row.session_id), stdout: String(row.stdout ?? ''), stderr: String(row.stderr ?? ''), finalResponse: nullable(row.final_response), baseCommit: nullable(row.base_commit), retryReason: nullable(row.retry_reason), evidence }
+    return { id: String(row.id), changeId: String(row.change_id), agentId: String(row.agent_id), taskId: nullable(row.task_id), agentSessionId: nullable(row.agent_session_id), parentRunId: nullable(row.parent_run_id), status: row.status as Run['status'], prompt: String(row.prompt), runtime: row.runtime as Run['runtime'], executable: String(row.executable), workspacePath: String(row.workspace_path), startedAt: nullable(row.started_at), endedAt: nullable(row.ended_at), exitCode: row.exit_code === null ? null : Number(row.exit_code), sessionId: nullable(row.session_id), stdout: String(row.stdout ?? ''), stderr: String(row.stderr ?? ''), finalResponse: nullable(row.final_response), baseCommit: nullable(row.base_commit), retryReason: nullable(row.retry_reason), evidence }
   }
 
   private event(aggregateType: string, aggregateId: string, eventType: string, payload: unknown): void {
@@ -245,3 +390,10 @@ const mapChange = (r: Record<string, unknown>): Change => ({ id: String(r.id), n
 const mapMessage = (r: Record<string, unknown>): Message => ({ id: String(r.id), changeId: String(r.change_id), senderType: r.sender_type as Message['senderType'], senderId: nullable(r.sender_id), senderName: String(r.sender_name), content: String(r.content), runId: nullable(r.run_id), createdAt: String(r.created_at) })
 const mapEvidence = (r: Record<string, unknown>): Evidence => ({ id: String(r.id), runId: String(r.run_id), type: r.type as Evidence['type'], title: String(r.title), status: r.status as Evidence['status'], detail: String(r.detail), createdAt: String(r.created_at) })
 const mapArtifact = (r: Record<string, unknown>): Artifact => ({ id: String(r.id), changeId: String(r.change_id), type: String(r.type), title: String(r.title), version: Number(r.version), status: r.status as Artifact['status'], content: String(r.content), supersedes: nullable(r.supersedes), createdAt: String(r.created_at), approvedAt: nullable(r.approved_at) })
+const mapBinding = (r: Record<string, unknown>): AgentWorkspaceBinding => ({ id: String(r.id), changeId: String(r.change_id), agentId: String(r.agent_id), workspaceId: String(r.workspace_id), permissions: parse(String(r.permissions), fullPermissions(false)), createdAt: String(r.created_at) })
+const mapWorkstream = (r: Record<string, unknown>): Workstream => ({ id: String(r.id), changeId: String(r.change_id), workspaceId: String(r.workspace_id), agentId: String(r.agent_id), name: String(r.name), status: r.status as Workstream['status'], worktreePath: nullable(r.worktree_path), branch: nullable(r.branch), baseCommit: nullable(r.base_commit), createdAt: String(r.created_at), updatedAt: String(r.updated_at) })
+const mapTask = (r: Record<string, unknown>): Task => ({ id: String(r.id), changeId: String(r.change_id), workstreamId: nullable(r.workstream_id), phaseId: String(r.phase_id), title: String(r.title), description: String(r.description), assignedAgentId: String(r.assigned_agent_id), verifierAgentId: nullable(r.verifier_agent_id), status: r.status as Task['status'], requiredEvidence: parse(String(r.required_evidence), []), currentRunId: nullable(r.current_run_id), parentTaskId: nullable(r.parent_task_id), createdAt: String(r.created_at), updatedAt: String(r.updated_at) })
+const mapAgentSession = (r: Record<string, unknown>): AgentSession => ({ id: String(r.id), changeId: String(r.change_id), agentId: String(r.agent_id), workspaceId: String(r.workspace_id), nativeSessionId: nullable(r.native_session_id), runtime: r.runtime as AgentSession['runtime'], status: r.status as AgentSession['status'], summary: nullable(r.summary), createdAt: String(r.created_at), updatedAt: String(r.updated_at) })
+const mapHandoff = (r: Record<string, unknown>): Handoff => ({ id: String(r.id), changeId: String(r.change_id), fromTaskId: nullable(r.from_task_id), fromAgentId: nullable(r.from_agent_id), toTaskId: nullable(r.to_task_id), toAgentId: nullable(r.to_agent_id), deliverable: String(r.deliverable), evidenceIds: parse(String(r.evidence_ids), []), status: r.status as Handoff['status'], createdAt: String(r.created_at), acceptedAt: nullable(r.accepted_at) })
+const mapIssue = (r: Record<string, unknown>): Issue => ({ id: String(r.id), changeId: String(r.change_id), taskId: nullable(r.task_id), ownerAgentId: nullable(r.owner_agent_id), title: String(r.title), description: String(r.description), severity: r.severity as Issue['severity'], status: r.status as Issue['status'], sourceEvidenceId: nullable(r.source_evidence_id), resolution: nullable(r.resolution), createdAt: String(r.created_at), updatedAt: String(r.updated_at) })
+const mapIntervention = (r: Record<string, unknown>): HumanIntervention => ({ id: String(r.id), changeId: String(r.change_id), targetAgentId: nullable(r.target_agent_id), affectedRunId: nullable(r.affected_run_id), reason: String(r.reason), newConstraints: String(r.new_constraints), operator: String(r.operator), createdAt: String(r.created_at) })

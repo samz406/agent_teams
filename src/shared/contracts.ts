@@ -3,6 +3,9 @@ export type RunStatus = 'QUEUED' | 'STARTING' | 'RUNNING' | 'PAUSED' | 'BLOCKED'
 export type AgentStatus = 'ONLINE' | 'IDLE' | 'RUNNING' | 'PAUSED' | 'ERROR' | 'OFFLINE'
 export type WorkflowType = 'cross-project' | 'incident' | 'bug-fix' | 'refactor' | 'release'
 export type ArtifactStatus = 'DRAFT' | 'REVIEW' | 'APPROVED' | 'DEPRECATED'
+export type TaskStatus = 'ASSIGNED' | 'QUEUED' | 'RUNNING' | 'RUN_COMPLETED' | 'VERIFYING' | 'ACCEPTED' | 'REWORK' | 'BLOCKED' | 'CANCELLED'
+export type IssueStatus = 'OPEN' | 'FIXING' | 'RESOLVED' | 'VERIFIED' | 'WONT_FIX'
+export type PermissionSet = { read: boolean; write: boolean; shell: boolean; git: boolean; network: boolean }
 
 export interface RuntimeInfo {
   type: RuntimeType
@@ -35,7 +38,7 @@ export interface Agent {
   command: string | null
   argsTemplate: string | null
   workspaceIds: string[]
-  permissions: { read: boolean; write: boolean; shell: boolean; git: boolean; network: boolean }
+  permissions: PermissionSet
   status: AgentStatus
   currentRunId?: string | null
   createdAt: string
@@ -68,6 +71,99 @@ export interface Change {
   updatedAt: string
 }
 
+export interface AgentWorkspaceBinding {
+  id: string
+  changeId: string
+  agentId: string
+  workspaceId: string
+  permissions: PermissionSet
+  createdAt: string
+}
+
+export interface Workstream {
+  id: string
+  changeId: string
+  workspaceId: string
+  agentId: string
+  name: string
+  status: 'READY' | 'ACTIVE' | 'BLOCKED' | 'DONE'
+  worktreePath: string | null
+  branch: string | null
+  baseCommit: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Task {
+  id: string
+  changeId: string
+  workstreamId: string | null
+  phaseId: string
+  title: string
+  description: string
+  assignedAgentId: string
+  verifierAgentId: string | null
+  status: TaskStatus
+  requiredEvidence: Evidence['type'][]
+  currentRunId: string | null
+  parentTaskId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AgentSession {
+  id: string
+  changeId: string
+  agentId: string
+  workspaceId: string
+  nativeSessionId: string | null
+  runtime: RuntimeType
+  status: 'ACTIVE' | 'PAUSED' | 'INTERRUPTED' | 'CLOSED'
+  summary: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Handoff {
+  id: string
+  changeId: string
+  fromTaskId: string | null
+  fromAgentId: string | null
+  toTaskId: string | null
+  toAgentId: string | null
+  deliverable: string
+  evidenceIds: string[]
+  status: 'CREATED' | 'ACCEPTED' | 'REJECTED'
+  createdAt: string
+  acceptedAt: string | null
+}
+
+export interface Issue {
+  id: string
+  changeId: string
+  taskId: string | null
+  ownerAgentId: string | null
+  title: string
+  description: string
+  severity: 'BLOCKING' | 'HIGH' | 'MEDIUM' | 'LOW'
+  status: IssueStatus
+  sourceEvidenceId: string | null
+  resolution: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface HumanIntervention {
+  id: string
+  changeId: string
+  targetAgentId: string | null
+  affectedRunId: string | null
+  reason: string
+  newConstraints: string
+  operator: string
+  createdAt: string
+}
+
 export interface Message {
   id: string
   changeId: string
@@ -93,6 +189,8 @@ export interface Run {
   id: string
   changeId: string
   agentId: string
+  taskId: string | null
+  agentSessionId: string | null
   parentRunId: string | null
   status: RunStatus
   prompt: string
@@ -132,6 +230,13 @@ export interface AppSnapshot {
   messages: Message[]
   runs: Run[]
   artifacts: Artifact[]
+  bindings: AgentWorkspaceBinding[]
+  workstreams: Workstream[]
+  tasks: Task[]
+  agentSessions: AgentSession[]
+  handoffs: Handoff[]
+  issues: Issue[]
+  interventions: HumanIntervention[]
 }
 
 export interface CreateChangeInput {
@@ -142,6 +247,7 @@ export interface CreateChangeInput {
   dueDate?: string | null
   workspaceIds: string[]
   agentIds: string[]
+  agentBindings: Array<{ agentId: string; workspaceId: string; permissions: PermissionSet }>
   tags: string[]
 }
 
@@ -163,5 +269,22 @@ export interface DesktopApi {
   advanceWorkflow(changeId: string): Promise<void>
   approveArtifact(artifactId: string, approve: boolean, feedback?: string): Promise<void>
   detectRuntimes(): Promise<RuntimeInfo[]>
+  updateIssue(issueId: string, status: IssueStatus, resolution?: string): Promise<void>
   onRuntimeEvent(listener: (event: RuntimeEvent) => void): () => void
 }
+
+export type RuntimeRequest =
+  | { type: 'snapshot.get' }
+  | { type: 'workspace.add'; workspace: Omit<Workspace, 'id' | 'createdAt'> }
+  | { type: 'change.create'; input: CreateChangeInput }
+  | { type: 'agent.create'; input: CreateAgentInput }
+  | { type: 'runtime.detect' }
+  | { type: 'message.send'; changeId: string; content: string; targetAgentId?: string }
+  | { type: 'run.control'; runId: string; action: 'pause' | 'resume' | 'stop' | 'retry'; reason?: string }
+  | { type: 'artifact.approve'; artifactId: string; approve: boolean; feedback?: string }
+  | { type: 'workflow.advance'; changeId: string }
+  | { type: 'issue.update'; issueId: string; status: IssueStatus; resolution?: string }
+
+export interface RuntimeRequestEnvelope { id: string; request: RuntimeRequest }
+export type RuntimeResponseEnvelope = { id: string; ok: true; result: unknown } | { id: string; ok: false; error: string }
+export type RuntimeProcessMessage = RuntimeResponseEnvelope | { event: RuntimeEvent }
