@@ -1,8 +1,8 @@
 {
-  "name": "moxt-ai-team-runtime",
+  "name": "agent-teams-runtime",
   "version": "0.1.0",
   "private": true,
-  "author": "Moxt",
+  "author": "Agent Teams",
   "description": "A local-first runtime for coordinating real coding agents across workspaces.",
   "main": "out/main/index.js",
   "type": "module",
@@ -34,7 +34,6 @@
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
-    "@vitejs/plugin-react": "^4.3.4",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
@@ -43,8 +42,8 @@
     "vitest": "^2.1.8"
   },
   "build": {
-    "appId": "ai.moxt.runtime",
-    "productName": "Moxt",
+    "appId": "ai.agentteams.runtime",
+    "productName": "Agent Teams",
     "asar": true,
     "files": ["out/**/*", "package.json"],
     "mac": { "target": ["dmg", "zip"], "category": "public.app-category.developer-tools" },
