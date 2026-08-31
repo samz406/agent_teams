@@ -26,6 +26,7 @@
 - 五种 Workflow 完整性、Human Gate、阶段投影单元测试。
 - CLI JSONL 的 Session/Final Response 解析和 Agent 委派协议单元测试。
 - SQLite Change/Message/Artifact 审批恢复集成测试。
+- GitHub Actions 在 push / pull request 时自动执行安装、测试、类型检查和生产构建。
 
 ## 发布前真实 E2E
 

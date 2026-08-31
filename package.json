@@ -7,10 +7,11 @@
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
-    "dev": "electron-vite dev",
+    "postinstall": "electron-builder install-app-deps",
+    "dev": "electron-builder install-app-deps && electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "test": "vitest run",
+    "test": "npm rebuild better-sqlite3 && vitest run",
     "typecheck": "tsc --noEmit",
     "package": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder"
