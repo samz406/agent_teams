@@ -252,6 +252,7 @@ export interface CreateChangeInput {
 }
 
 export interface CreateAgentInput extends Omit<Agent, 'id' | 'status' | 'createdAt' | 'currentRunId'> {}
+export interface UpdateAgentInput extends CreateAgentInput { id: string }
 
 export type RuntimeEvent =
   | { type: 'snapshot.changed'; snapshot: AppSnapshot }
@@ -264,6 +265,7 @@ export interface DesktopApi {
   selectWorkspace(): Promise<Workspace | null>
   createChange(input: CreateChangeInput): Promise<Change>
   createAgent(input: CreateAgentInput): Promise<Agent>
+  updateAgent(input: UpdateAgentInput): Promise<Agent>
   sendMessage(changeId: string, content: string, targetAgentId?: string): Promise<void>
   controlRun(runId: string, action: 'pause' | 'resume' | 'stop' | 'retry', reason?: string): Promise<void>
   advanceWorkflow(changeId: string): Promise<void>
@@ -278,6 +280,7 @@ export type RuntimeRequest =
   | { type: 'workspace.add'; workspace: Omit<Workspace, 'id' | 'createdAt'> }
   | { type: 'change.create'; input: CreateChangeInput }
   | { type: 'agent.create'; input: CreateAgentInput }
+  | { type: 'agent.update'; input: UpdateAgentInput }
   | { type: 'runtime.detect' }
   | { type: 'message.send'; changeId: string; content: string; targetAgentId?: string }
   | { type: 'run.control'; runId: string; action: 'pause' | 'resume' | 'stop' | 'retry'; reason?: string }
