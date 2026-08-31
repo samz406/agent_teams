@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, Bot, Boxes, FileText, FolderGit2, GitPullRequest, History, LayoutDashboard, LoaderCircle, MessageSquareText, Plus, Settings, Workflow } from 'lucide-react'
+import { Bot, Boxes, FileText, FolderGit2, History, LayoutDashboard, LoaderCircle, MessageSquareText, Plus, Settings, Workflow } from 'lucide-react'
 import { useAppStore } from './store'
 import Dashboard from './pages/Dashboard'
 import NewTask from './pages/NewTask'
 import TaskRoom from './pages/TaskRoom'
 import Agents from './pages/Agents'
 import RuntimeSettings from './pages/RuntimeSettings'
+import Workflows from './pages/Workflows'
 
 type Route = { page: 'dashboard' | 'new' | 'task' | 'agents' | 'settings' | 'workflows' | 'history'; id?: string }
 
@@ -14,10 +15,10 @@ export default function App(): import('react').JSX.Element {
   const [route, setRoute] = useState<Route>({ page: 'dashboard' })
   useEffect(() => { void load(); return window.moxt.onRuntimeEvent(apply) }, [load, apply])
   const active = useMemo(() => route.page === 'task' ? snapshot.changes.find(change => change.id === route.id) : undefined, [route, snapshot])
-  if (!ready) return <div className="boot"><div className="brand-mark">M</div><LoaderCircle className="spin"/><span>正在恢复 Team Runtime…</span></div>
+  if (!ready) return <div className="boot"><div className="brand-mark">AT</div><LoaderCircle className="spin"/><span>正在恢复 Agent Teams Runtime…</span></div>
   return <div className="app-shell">
     <aside className="sidebar">
-      <div className="logo"><div className="brand-mark">M</div><div><strong>Moxt</strong><span>AI Team Runtime</span></div></div>
+      <div className="logo"><div className="brand-mark">AT</div><div><strong>Agent Teams</strong><span>AI Team Runtime</span></div></div>
       <nav>
         <Nav icon={<LayoutDashboard/>} label="工作台" active={route.page === 'dashboard'} onClick={() => setRoute({ page: 'dashboard' })}/>
         <Nav icon={<Plus/>} label="新建任务" active={route.page === 'new'} onClick={() => setRoute({ page: 'new' })}/>
@@ -36,7 +37,7 @@ export default function App(): import('react').JSX.Element {
       {route.page === 'task' && active && <TaskRoom change={active}/>} 
       {route.page === 'agents' && <Agents/>}
       {route.page === 'settings' && <RuntimeSettings/>}
-      {route.page === 'workflows' && <SimpleList title="工作流模板" subtitle="五种责任流模板是护栏，不是固定 DAG。Leader 可以在规则内动态选人、并行、返工和升级。" icon={<GitPullRequest/>} items={['跨项目协同开发', '线上问题会诊', 'Bug 修复与独立验证', '大型受控重构', '发布前检查']}/>} 
+      {route.page === 'workflows' && <Workflows/>} 
       {route.page === 'history' && <SimpleList title="会话历史" subtitle="每条正式 Agent 回复都绑定真实 Session、Run 与 Evidence。" icon={<History/>} items={snapshot.changes.map(c => `#${c.number} · ${c.title} · ${snapshot.messages.filter(m => m.changeId === c.id).length} 条消息`)}/>} 
     </main>
     {notice && <div className={`toast ${notice.type}`}>{notice.text}</div>}
@@ -48,5 +49,5 @@ function Nav({ icon, label, active, onClick, badge }: { icon: import('react').JS
 }
 
 function SimpleList({ title, subtitle, icon, items }: { title: string; subtitle: string; icon: import('react').JSX.Element; items: string[] }): import('react').JSX.Element {
-  return <section className="page"><header className="page-header"><div><h1>{title}</h1><p>{subtitle}</p></div></header><div className="list-card">{items.length ? items.map((item, i) => <div className="large-row" key={item}>{icon}<span>{item}</span><small>查看详情</small></div>) : <div className="empty"><FileText/><h3>暂无记录</h3></div>}</div></section>
+  return <section className="page"><header className="page-header"><div><h1>{title}</h1><p>{subtitle}</p></div></header><div className="list-card">{items.length ? items.map(item => <div className="large-row" key={item}>{icon}<span>{item}</span></div>) : <div className="empty"><FileText/><h3>暂无记录</h3></div>}</div></section>
 }

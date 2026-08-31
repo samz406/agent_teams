@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { Activity, ArrowRight, Bot, Check, ChevronRight, CircleStop, Clock3, FileCode2, FileText, GitCompare, LoaderCircle, MessageSquareText, MoreHorizontal, Pause, Play, RefreshCw, Send, ShieldCheck, Terminal, TestTube2, Users, X } from 'lucide-react'
+import { Activity, ArrowRight, Check, ChevronRight, CircleStop, Clock3, FileCode2, FileText, LoaderCircle, MessageSquareText, MoreHorizontal, Pause, Play, RefreshCw, Send, ShieldCheck, Terminal, Users, X } from 'lucide-react'
 import type { Agent, Change, Run } from '../../../shared/contracts'
 import { phasesFor, WORKFLOW_LABELS } from '../../../shared/workflows'
 import { errorText, useAppStore } from '../store'
@@ -8,26 +8,57 @@ import { errorText, useAppStore } from '../store'
 type Tab = 'chat' | 'workflow' | 'artifacts'
 
 export default function TaskRoom({ change }: { change: Change }): import('react').JSX.Element {
-  const { snapshot, live, notify } = useAppStore()
+  const { snapshot, live, notify, load } = useAppStore()
   const [tab, setTab] = useState<Tab>('chat')
   const [text, setText] = useState('')
   const [target, setTarget] = useState('')
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const team = snapshot.agents.filter(a => change.agentIds.includes(a.id))
   const messages = snapshot.messages.filter(m => m.changeId === change.id)
   const runs = snapshot.runs.filter(r => r.changeId === change.id)
   const artifacts = snapshot.artifacts.filter(a => a.changeId === change.id)
   const phases = phasesFor(change.workflowType, change.currentPhase)
   const inspector = selectedAgent ? team.find(a => a.id === selectedAgent) : undefined
+  const mentionMatches = useMemo(() => mentionQuery === null ? [] : team.filter(agent => agent.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8), [mentionQuery, team])
+
   async function send(): Promise<void> {
     if (!text.trim()) return
     setSending(true)
-    try { await window.moxt.sendMessage(change.id, text.trim(), target || undefined); setText(''); notify('success', '已交给真实 CLI Runtime 执行') }
+    try { await window.moxt.sendMessage(change.id, text.trim(), target || undefined); setText(''); setMentionQuery(null); notify('success', '消息已交给 Agent Teams Runtime') }
     catch (error) { notify('error', errorText(error)) } finally { setSending(false) }
   }
+  function updateText(value: string): void {
+    setText(value)
+    const match = value.match(/(?:^|\s)@([^@\s]*)$/)
+    setMentionQuery(match ? match[1] : null)
+  }
+  function chooseMention(agent: Agent): void {
+    setText(current => current.replace(/(^|\s)@[^@\s]*$/, (_match, prefix: string) => `${prefix}@${agent.name} `))
+    setTarget(agent.id)
+    setMentionQuery(null)
+  }
+  async function controlAll(action: 'pause' | 'stop'): Promise<void> {
+    const active = runs.filter(run => ['QUEUED', 'STARTING', 'RUNNING'].includes(run.status))
+    if (!active.length) { notify('success', '当前没有运行中的 Run'); setMenuOpen(false); return }
+    try {
+      await Promise.all(active.map(run => window.moxt.controlRun(run.id, action)))
+      notify('success', action === 'pause' ? `已暂停 ${active.length} 个 Run` : `已终止 ${active.length} 个 Run`)
+    } catch (error) { notify('error', errorText(error)) }
+    setMenuOpen(false)
+  }
+  async function refresh(): Promise<void> { await load(); notify('success', '任务状态已刷新'); setMenuOpen(false) }
+  async function replan(): Promise<void> {
+    const leaderAgent = team.find(agent => agent.name === 'Leader')
+    try { await window.moxt.sendMessage(change.id, '/plan', leaderAgent?.id); notify('success', '已要求 Leader 基于当前证据重新规划') }
+    catch (error) { notify('error', errorText(error)) }
+    setMenuOpen(false)
+  }
+
   return <section className="task-room">
-    <header className="room-header"><div><div className="eyebrow">任务 #{change.number} · {WORKFLOW_LABELS[change.workflowType].name}</div><h1>{change.title}</h1><p>{change.description}</p></div><div className="room-actions"><span className="running-dot">● {change.status}</span><button className="icon-btn"><MoreHorizontal/></button></div></header>
+    <header className="room-header"><div><div className="eyebrow">任务 #{change.number} · {WORKFLOW_LABELS[change.workflowType].name}</div><h1>{change.title}</h1><p>{change.description}</p></div><div className="room-actions"><span className="running-dot">● {change.status}</span><div className="task-menu"><button className="icon-btn" aria-label="任务操作" onClick={() => setMenuOpen(value => !value)}><MoreHorizontal/></button>{menuOpen && <div className="task-menu-popover"><button onClick={() => { setTab('workflow'); setMenuOpen(false) }}><Activity/>查看 Workflow</button><button onClick={() => void refresh()}><RefreshCw/>刷新任务状态</button><button onClick={() => void replan()}><Play/>让 Leader 重新规划</button><button onClick={() => void controlAll('pause')}><Pause/>暂停全部运行</button><button className="danger" onClick={() => void controlAll('stop')}><CircleStop/>终止全部运行</button></div>}</div></div></header>
     <div className="phase-bar">{phases.map((phase, i) => <button key={phase.id} className={phase.status.toLowerCase()} onClick={() => setTab('workflow')}><i>{phase.status === 'DONE' ? <Check/> : i + 1}</i><span>{phase.name}</span></button>)}</div>
     <div className="room-tabs"><button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}><MessageSquareText/>Team Chat</button><button className={tab === 'workflow' ? 'active' : ''} onClick={() => setTab('workflow')}><Activity/>Workflow</button><button className={tab === 'artifacts' ? 'active' : ''} onClick={() => setTab('artifacts')}><FileText/>Artifact <em>{artifacts.length}</em></button></div>
     <div className={`room-body ${inspector ? 'with-inspector' : ''}`}>
@@ -36,7 +67,7 @@ export default function TaskRoom({ change }: { change: Change }): import('react'
         {tab === 'chat' && <Chat messages={messages} runs={runs} live={live} agents={team} onInspect={setSelectedAgent}/>} 
         {tab === 'workflow' && <WorkflowView change={change}/>} 
         {tab === 'artifacts' && <ArtifactView change={change}/>} 
-        {tab === 'chat' && <div className="composer"><div className="composer-top"><select value={target} onChange={e => setTarget(e.target.value)}><option value="">@Leader（默认）</option>{team.map(a => <option value={a.id} key={a.id}>@{a.name}</option>)}</select><span>发送会启动真实 CLI Run</span></div><textarea value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void send() }} placeholder="输入目标、约束或纠偏指令。可直接 @Agent；⌘/Ctrl + Enter 发送。"/><div className="composer-foot"><span>/status 查看状态 · /plan 重新规划</span><button className="send" disabled={sending || !text.trim()} onClick={() => void send()}>{sending ? <LoaderCircle className="spin"/> : <Send/>}</button></div></div>}
+        {tab === 'chat' && <div className="composer"><div className="composer-top"><select value={target} onChange={e => setTarget(e.target.value)}><option value="">@Leader（默认）</option>{team.map(a => <option value={a.id} key={a.id}>@{a.name}</option>)}</select><span>发送会启动真实 CLI Run；查询状态不会打断正在执行的 Run</span></div><div className="composer-editor"><textarea value={text} onChange={e => updateText(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') setMentionQuery(null); if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void send() }} placeholder="输入目标、约束或纠偏指令。输入 @ 可选择 Agent；⌘/Ctrl + Enter 发送。"/>{mentionQuery !== null && <div className="mention-popover"><div className="mention-title">选择 Agent</div>{mentionMatches.length ? mentionMatches.map(agent => <button key={agent.id} onMouseDown={event => event.preventDefault()} onClick={() => chooseMention(agent)}><span className="agent-avatar">{agent.icon}</span><div><strong>@{agent.name}</strong><small>{agent.responsibility}</small></div><em>{agent.runtime}</em></button>) : <p>当前团队没有匹配的 Agent</p>}</div>}</div><div className="composer-foot"><span>/status 查看状态 · /plan 重新规划</span><button className="send" disabled={sending || !text.trim()} onClick={() => void send()}>{sending ? <LoaderCircle className="spin"/> : <Send/>}</button></div></div>}
       </div>
       {inspector && <AgentInspector agent={inspector} runs={runs.filter(r => r.agentId === inspector.id)} live={live} onClose={() => setSelectedAgent(null)}/>} 
     </div>
@@ -70,7 +101,7 @@ function WorkflowView({ change }: { change: Change }): import('react').JSX.Eleme
   const issues = snapshot.issues.filter(issue => issue.changeId === change.id && !['RESOLVED','VERIFIED','WONT_FIX'].includes(issue.status))
   async function advance(): Promise<void> { try { await window.moxt.advanceWorkflow(change.id); notify('success', 'Workflow 已进入下一阶段') } catch (error) { notify('error', errorText(error)) } }
   async function resolveIssue(id: string): Promise<void> { try { await window.moxt.updateIssue(id, 'RESOLVED', 'Human confirmed resolution'); notify('success', 'Issue 已解决') } catch (error) { notify('error', errorText(error)) } }
-  return <div className="workflow-view"><div className="phase-list">{phases.map((phase, i) => <div className={phase.status.toLowerCase()} key={phase.id}><i>{phase.status === 'DONE' ? <Check/> : i + 1}</i><div><strong>{phase.name}</strong><p>{phase.goal}</p></div><span>{phase.status}</span></div>)}</div><div className="phase-detail"><span className="chip">当前阶段</span><h2>{current.name}</h2><p>{current.goal}</p><h4>当前 Task</h4><div className="task-state-list">{tasks.length ? tasks.map(task => <div key={task.id}><span className={`status ${task.status.toLowerCase()}`}>{task.status}</span><strong>{task.title}</strong><small>Required: {task.requiredEvidence.join(' · ')}</small></div>) : <p>发送任务后由 Leader 创建并分派 Task。</p>}</div><h4>Blocking Issues</h4><div className="issue-list">{issues.length ? issues.map(issue => <div key={issue.id}><span>{issue.severity}</span><strong>{issue.title}</strong><p>{issue.description}</p><button onClick={() => void resolveIssue(issue.id)}>标记已解决</button></div>) : <p>当前没有未解决的 Blocking Issue。</p>}</div><h4>交付物</h4><div className="deliverable"><FileText/>{current.deliverable}</div><h4>Exit Criteria</h4>{current.exitCriteria.map(item => <label key={item}><input type="checkbox" readOnly checked={tasks.length > 0 && tasks.every(task => task.status === 'ACCEPTED')}/>{item}</label>)}<h4>Human Mode</h4><span className="human-mode">{current.humanMode}</span><h4>Active Runs</h4><p>{active.length ? `${active.length} 个 Agent 正在执行` : '当前没有运行中的 Agent'}</p><button className="primary" onClick={() => void advance()}>由状态机校验并推进<ArrowRight/></button></div></div>
+  return <div className="workflow-view"><div className="phase-list">{phases.map((phase, i) => <div className={phase.status.toLowerCase()} key={phase.id}><i>{phase.status === 'DONE' ? <Check/> : i + 1}</i><div><strong>{phase.name}</strong><p>{phase.goal}</p></div><span>{phase.status}</span></div>)}</div><div className="phase-detail"><span className="chip">当前阶段</span><h2>{current.name}</h2><p>{current.goal}</p><h4>当前 Task</h4><div className="task-state-list">{tasks.length ? tasks.map(task => <div key={task.id}><span className={`status ${task.status.toLowerCase()}`}>{task.status}</span><strong>{task.title}</strong><small>Required: {task.requiredEvidence.join(' · ')}</small></div>) : <p>任务创建后会自动由 Leader 建立首个 Task；后续由协作和委派继续生成。</p>}</div><h4>Blocking Issues</h4><div className="issue-list">{issues.length ? issues.map(issue => <div key={issue.id}><span>{issue.severity}</span><strong>{issue.title}</strong><p>{issue.description}</p><button onClick={() => void resolveIssue(issue.id)}>标记已解决</button></div>) : <p>当前没有未解决的 Blocking Issue。</p>}</div><h4>交付物</h4><div className="deliverable"><FileText/>{current.deliverable}</div><h4>Exit Criteria</h4>{current.exitCriteria.map(item => <label key={item}><input type="checkbox" readOnly checked={tasks.length > 0 && tasks.every(task => task.status === 'ACCEPTED')}/>{item}</label>)}<h4>Human Mode</h4><span className="human-mode">{current.humanMode}</span><h4>Active Runs</h4><p>{active.length ? `${active.length} 个 Agent 正在执行` : '当前没有运行中的 Agent'}</p><button className="primary" onClick={() => void advance()}>由状态机校验并推进<ArrowRight/></button></div></div>
 }
 
 function ArtifactView({ change }: { change: Change }): import('react').JSX.Element {

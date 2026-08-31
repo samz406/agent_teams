@@ -1,19 +1,22 @@
 import { join } from 'node:path'
 import { AppDatabase } from '../main/database'
 import { WORKFLOWS } from '../shared/workflows'
-import type { Agent, RuntimeEvent, RuntimeProcessMessage, RuntimeRequest, RuntimeRequestEnvelope } from '../shared/contracts'
+import type { Agent, AppSnapshot, Change, RuntimeEvent, RuntimeProcessMessage, RuntimeRequest, RuntimeRequestEnvelope } from '../shared/contracts'
 import { AdapterRegistry } from './adapters'
+import { updateAgentRecord } from './agent-store'
 import { LeaderEngine } from './leader-engine'
 import { TeamRunManager } from './run-manager'
 import { WorkspaceManager } from './workspace-manager'
 
 interface ParentPort { postMessage(message: RuntimeProcessMessage): void; on(event: 'message', listener: (event: { data: RuntimeRequestEnvelope }) => void): void }
 const port = (process as NodeJS.Process & { parentPort?: ParentPort }).parentPort
-if (!port) throw new Error('Moxt Runtime 必须由 Electron utilityProcess 启动')
+if (!port) throw new Error('Agent Teams Runtime 必须由 Electron utilityProcess 启动')
 const dataDirectory = process.env.MOXT_DATA_DIR
-if (!dataDirectory) throw new Error('MOXT_DATA_DIR 未配置')
+if (!dataDirectory) throw new Error('Runtime 数据目录未配置')
 
-const db = new AppDatabase(join(dataDirectory, 'database', 'moxt.db'))
+// Keep the existing database filename so upgrading from the previous Moxt build does not lose local data.
+const databasePath = join(dataDirectory, 'database', 'moxt.db')
+const db = new AppDatabase(databasePath)
 const registry = new AdapterRegistry()
 const publish = (event: RuntimeEvent): void => port.postMessage({ event })
 let runManager: TeamRunManager
@@ -35,13 +38,33 @@ async function dispatch(request: RuntimeRequest): Promise<unknown> {
     case 'snapshot.get': return db.snapshot(runManager.getRuntimes())
     case 'workspace.add': { const value = db.addWorkspace(request.workspace); changed(); return value }
     case 'agent.create': { const value = db.createAgent(request.input); changed(); return value }
+    case 'agent.update': { const value = updateAgentRecord(databasePath, request.input); changed(); return value }
     case 'runtime.detect': { const runtimes = await registry.detect(); runManager.setRuntimes(runtimes); changed(); return runtimes }
     case 'change.create': {
       if (!request.input.title.trim() || !request.input.description.trim()) throw new Error('任务标题和描述不能为空')
       if (!request.input.workspaceIds.length || !request.input.agentIds.length) throw new Error('至少选择一个 Workspace 和 Agent')
       if (request.input.agentBindings.length !== request.input.agentIds.length) throw new Error('每个 Agent 必须绑定一个 Workspace')
       for (const binding of request.input.agentBindings) if (!request.input.agentIds.includes(binding.agentId) || !request.input.workspaceIds.includes(binding.workspaceId)) throw new Error('Agent-Workspace Binding 越过当前 Change 范围')
-      const value = db.createChange(request.input); changed(); return value
+      const value = db.createChange(request.input)
+      const state = db.snapshot(runManager.getRuntimes())
+      const initialAgent = state.agents.find(agent => agent.name === 'Leader' && value.agentIds.includes(agent.id)) ?? state.agents.find(agent => value.agentIds.includes(agent.id))
+      if (!initialAgent) throw new Error('任务已创建，但没有可执行的初始 Agent')
+      const phase = WORKFLOWS[value.workflowType][value.currentPhase]
+      const prompt = `任务已创建，请立即开始真实执行，不要等待用户再次发消息。\n\n任务：#${value.number} ${value.title}\n当前阶段：${phase.name}\n阶段目标：${phase.goal}\n任务描述：${value.description}\n\n请先读取当前 Workspace 的真实代码/文件，形成当前阶段需要的结论和证据；需要其他 Agent 参与时使用 team-actions 委派。不要把“应用内任务列表”误认为 Workspace 中的文件或 CLI 自带任务列表。`
+      const task = leader.createTask(value, initialAgent, value.description)
+      db.addMessage(value.id, 'system', null, 'System', `${initialAgent.name} 已自动接手 ${phase.name}，正在启动真实 CLI Runtime。`, null)
+      changed()
+      try {
+        await runManager.start(value.id, initialAgent, buildExecutionContext(value, db.snapshot(runManager.getRuntimes()), initialAgent, prompt), task)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        db.updateTask(task.id, 'BLOCKED', null)
+        db.updateChangeState(value.id, 'BLOCKED')
+        db.addMessage(value.id, 'system', null, 'System', `初始 Runtime 启动失败：${message}。任务和 Task 已保留，可修复 Runtime 配置后继续。`, null)
+        publish({ type: 'runtime.notice', level: 'error', message: `任务已创建，但 Runtime 启动失败：${message}` })
+        changed()
+      }
+      return db.getChange(value.id) ?? value
     }
     case 'message.send': return sendMessage(request.changeId, request.content, request.targetAgentId)
     case 'run.control': return runManager.control(request.runId, request.action, request.reason)
@@ -57,6 +80,13 @@ async function sendMessage(changeId: string, content: string, targetAgentId?: st
   const state = db.snapshot(runManager.getRuntimes()); const normalized = content.toLowerCase()
   const target = targetAgentId ? db.getAgent(targetAgentId) : state.agents.find(agent => normalized.includes(`@${agent.name.toLowerCase().replaceAll(' ', '-')}`) || normalized.includes(`@${agent.name.toLowerCase()}`)) || state.agents.find(agent => agent.name === 'Leader') || state.agents.find(agent => change.agentIds.includes(agent.id))
   assertTeamAgent(target, change.agentIds)
+
+  if (target.name === 'Leader' && isStatusQuery(content)) {
+    db.addMessage(change.id, 'leader', target.id, 'Leader', formatRuntimeStatus(change, state), null)
+    changed()
+    return
+  }
+
   const active = db.findActiveRun(changeId, target.id)
   if (active) {
     db.addIntervention({ changeId, targetAgentId: target.id, affectedRunId: active.id, reason: 'Direct human instruction while Agent was active', newConstraints: content, operator: 'You' })
@@ -65,7 +95,34 @@ async function sendMessage(changeId: string, content: string, targetAgentId?: st
   const phaseId = WORKFLOWS[change.workflowType][change.currentPhase].id
   const task = db.findReworkTask(change.id, phaseId, target.id) ?? leader.createTask(change, target, content)
   if (task.status === 'REWORK' || task.status === 'BLOCKED') db.updateTask(task.id, 'ASSIGNED', null)
-  await runManager.start(changeId, target, content, task, active ? { parentRunId: active.id, retryReason: 'Human intervention', resumeNative: true } : {})
+  const latestState = db.snapshot(runManager.getRuntimes())
+  const prompt = buildExecutionContext(change, latestState, target, content)
+  await runManager.start(changeId, target, prompt, task, active ? { parentRunId: active.id, retryReason: 'Human intervention', resumeNative: true } : {})
+}
+
+function buildExecutionContext(change: Change, state: AppSnapshot, target: Agent, instruction: string): string {
+  const phase = WORKFLOWS[change.workflowType][change.currentPhase]
+  const tasks = state.tasks.filter(task => task.changeId === change.id)
+  const activeRuns = state.runs.filter(run => run.changeId === change.id && ['QUEUED', 'STARTING', 'RUNNING'].includes(run.status))
+  const taskLines = tasks.length ? tasks.map(task => `- ${task.title}: ${task.status}${task.currentRunId ? ` (run ${task.currentRunId.slice(0, 8)})` : ''}`).join('\n') : '- 暂无持久化 Task'
+  const runLines = activeRuns.length ? activeRuns.map(run => `- ${state.agents.find(agent => agent.id === run.agentId)?.name ?? run.agentId}: ${run.status} (${run.id.slice(0, 8)})`).join('\n') : '- 当前没有活动 Run'
+  return `Agent Teams Runtime context（这是应用内 Source of Truth，不要通过 Workspace 文件猜测任务是否存在）：\nChange: #${change.number} ${change.title}\nChange Status: ${change.status}\nWorkflow Phase: ${phase.name} — ${phase.goal}\nTarget Agent: ${target.name}\n\nPersisted Tasks:\n${taskLines}\n\nActive Runs:\n${runLines}\n\nHuman instruction:\n${instruction}\n\n请基于以上应用状态和真实 Workspace 执行。若上下文列出了 Task/Run，不得回答“任务列表为空”或“当前没有任务”，除非你明确指出是在说其他 CLI/文件系统中的列表。`
+}
+
+function isStatusQuery(content: string): boolean {
+  const value = content.trim().toLowerCase()
+  if (/^\/status\b/.test(value)) return true
+  if (value.length > 50) return false
+  return /(任务.*(在进行|进行没|进行吗|有没有)|还在执行|执行到哪|当前(进度|状态)|现在(进度|状态)|进度如何|状态如何|running\??$|status\??$|progress\??$)/i.test(value)
+}
+
+function formatRuntimeStatus(change: Change, state: AppSnapshot): string {
+  const phase = WORKFLOWS[change.workflowType][change.currentPhase]
+  const tasks = state.tasks.filter(task => task.changeId === change.id)
+  const activeRuns = state.runs.filter(run => run.changeId === change.id && ['QUEUED', 'STARTING', 'RUNNING'].includes(run.status))
+  const taskSummary = tasks.length ? tasks.map(task => `- ${task.title}：${task.status}`).join('\n') : '- 暂无 Task'
+  const runSummary = activeRuns.length ? activeRuns.map(run => `- ${state.agents.find(agent => agent.id === run.agentId)?.name ?? 'Agent'}：${run.status}，Run ${run.id.slice(0, 8)}`).join('\n') : '- 当前没有活动 Run'
+  return `任务 #${change.number} **${change.title}** 当前状态：**${change.status}**，Workflow 位于 **${phase.name}**。\n\nTask：\n${taskSummary}\n\nRuntime：\n${runSummary}\n\n以上直接来自 Agent Teams 的持久化状态，不是从 Workspace 或 CLI 的临时任务列表推断。`
 }
 
 function assertTeamAgent(agent: Agent | undefined, teamIds: string[]): asserts agent is Agent {

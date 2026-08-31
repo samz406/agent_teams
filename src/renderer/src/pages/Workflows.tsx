@@ -1,0 +1,10 @@
+import { useState } from 'react'
+import { ChevronRight, GitPullRequest, ShieldCheck, X } from 'lucide-react'
+import type { WorkflowType } from '../../../shared/contracts'
+import { WORKFLOW_LABELS, WORKFLOWS } from '../../../shared/workflows'
+
+export default function Workflows(): import('react').JSX.Element {
+  const [selected, setSelected] = useState<WorkflowType | null>(null)
+  const entries = Object.entries(WORKFLOW_LABELS) as Array<[WorkflowType, (typeof WORKFLOW_LABELS)[WorkflowType]]>
+  return <section className="page"><header className="page-header"><div><h1>工作流模板</h1><p>五种责任流模板是护栏，不是固定 DAG。Leader 可以在规则内动态选人、并行、返工和升级。</p></div></header><div className="workflow-template-list">{entries.map(([type, meta]) => <div className="workflow-template-row" key={type}><span className="workflow-template-icon"><GitPullRequest/></span><div><strong>{meta.name}</strong><p>{meta.description}</p><small>{WORKFLOWS[type].length} 个阶段 · {WORKFLOWS[type].filter(phase => phase.humanMode === 'IN_LOOP').length} 个强人工 Gate</small></div><button onClick={() => setSelected(type)}>查看详情<ChevronRight/></button></div>)}</div>{selected && <div className="modal-backdrop"><div className="modal workflow-detail-modal"><header><div><h2>{WORKFLOW_LABELS[selected].name}</h2><p>{WORKFLOW_LABELS[selected].description}</p></div><button onClick={() => setSelected(null)}><X/></button></header><div className="workflow-detail-phases">{WORKFLOWS[selected].map((phase, index) => <div className="workflow-detail-phase" key={phase.id}><i>{index + 1}</i><div><div className="workflow-phase-heading"><strong>{phase.name}</strong><span>{phase.humanMode}</span></div><p>{phase.goal}</p><dl><div><dt>交付物</dt><dd>{phase.deliverable}</dd></div><div><dt>Exit Criteria</dt><dd>{phase.exitCriteria.join('；')}</dd></div></dl></div></div>)}</div><div className="permission-note"><ShieldCheck/>模板只规定阶段目标、证据和 Gate；真实执行仍由 Leader 根据当前任务、Agent 能力和 Evidence 动态编排。</div><footer><button className="primary" onClick={() => setSelected(null)}>关闭</button></footer></div></div>}</section>
+}

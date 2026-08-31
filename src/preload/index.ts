@@ -1,11 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateAgentInput, CreateChangeInput, DesktopApi, RuntimeEvent } from '../shared/contracts'
+import type { CreateAgentInput, CreateChangeInput, DesktopApi, RuntimeEvent, UpdateAgentInput } from '../shared/contracts'
 
 const api: DesktopApi = {
   getSnapshot: () => ipcRenderer.invoke('app:snapshot'),
   selectWorkspace: () => ipcRenderer.invoke('workspace:select'),
   createChange: (input: CreateChangeInput) => ipcRenderer.invoke('change:create', input),
   createAgent: (input: CreateAgentInput) => ipcRenderer.invoke('agent:create', input),
+  updateAgent: (input: UpdateAgentInput) => ipcRenderer.invoke('agent:update', input),
   sendMessage: (changeId: string, content: string, targetAgentId?: string) => ipcRenderer.invoke('message:send', changeId, content, targetAgentId),
   controlRun: (runId, action, reason) => ipcRenderer.invoke('run:control', runId, action, reason),
   advanceWorkflow: changeId => ipcRenderer.invoke('workflow:advance', changeId),

@@ -3,14 +3,14 @@ import { join } from 'node:path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { inspectWorkspace } from './runtime/git'
 import { RuntimeClient } from './runtime-client'
-import type { AppSnapshot, CreateAgentInput, CreateChangeInput, IssueStatus, RuntimeEvent } from '../shared/contracts'
+import type { AppSnapshot, CreateAgentInput, CreateChangeInput, IssueStatus, RuntimeEvent, UpdateAgentInput } from '../shared/contracts'
 
 let window: BrowserWindow | null = null
 let runtime: RuntimeClient
 const publish = (event: RuntimeEvent): void => { const target = window; if (target && !target.isDestroyed()) target.webContents.send('runtime:event', event) }
 
 function createWindow(): void {
-  window = new BrowserWindow({ width: 1500, height: 940, minWidth: 1100, minHeight: 700, show: false, backgroundColor: '#f4f7fb', titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default', webPreferences: { preload: join(__dirname, '../preload/index.mjs'), sandbox: true, contextIsolation: true, nodeIntegration: false } })
+  window = new BrowserWindow({ width: 1500, height: 940, minWidth: 1100, minHeight: 700, show: false, backgroundColor: '#f4f7fb', title: 'Agent Teams', titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default', webPreferences: { preload: join(__dirname, '../preload/index.mjs'), sandbox: true, contextIsolation: true, nodeIntegration: false } })
   window.on('ready-to-show', () => window?.show())
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   if (is.dev && process.env.ELECTRON_RENDERER_URL) window.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -27,6 +27,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('change:create', (_event, input: CreateChangeInput) => runtime.request({ type: 'change.create', input }))
   ipcMain.handle('agent:create', (_event, input: CreateAgentInput) => runtime.request({ type: 'agent.create', input }))
+  ipcMain.handle('agent:update', (_event, input: UpdateAgentInput) => runtime.request({ type: 'agent.update', input }))
   ipcMain.handle('runtime:detect', () => runtime.request({ type: 'runtime.detect' }))
   ipcMain.handle('message:send', (_event, changeId: string, content: string, targetAgentId?: string) => runtime.request({ type: 'message.send', changeId, content, targetAgentId }))
   ipcMain.handle('run:control', (_event, runId: string, action: 'pause' | 'resume' | 'stop' | 'retry', reason?: string) => runtime.request({ type: 'run.control', runId, action, reason }))
@@ -36,7 +37,7 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('ai.moxt.runtime')
+  electronApp.setAppUserModelId('ai.agentteams.runtime')
   app.on('browser-window-created', (_, createdWindow) => optimizer.watchWindowShortcuts(createdWindow))
   runtime = new RuntimeClient(app.getPath('userData'), publish)
   registerIpc(); createWindow()
