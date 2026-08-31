@@ -9,7 +9,7 @@ export default function Dashboard({ onNew, onOpen }: { onNew(): void; onOpen(id:
   const done = snapshot.changes.filter(c => c.status === 'DONE').length
   const failed = snapshot.changes.filter(c => ['FAILED', 'BLOCKED'].includes(c.status)).length
   return <section className="page dashboard">
-    <header className="page-header"><div><h1>下午好，Max</h1><p>Moxt AI Team Runtime · Build Your AI Native Team</p></div><button className="primary" onClick={onNew}><Plus/>新建任务</button></header>
+    <header className="page-header"><div><h1>下午好，Max</h1><p>Agent Teams · AI Team Runtime</p></div><button className="primary" onClick={onNew}><Plus/>新建任务</button></header>
     <div className="metric-grid">
       <Metric icon={<PlayCircle/>} label="运行中" value={running} tone="blue"/><Metric icon={<Clock3/>} label="等待人工" value={waiting} tone="amber"/><Metric icon={<CheckCircle2/>} label="今日完成" value={done} tone="green"/><Metric icon={<AlertCircle/>} label="失败/终止" value={failed} tone="red"/>
     </div>
