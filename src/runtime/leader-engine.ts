@@ -3,7 +3,7 @@ import type { AppDatabase } from '../main/database'
 import { WORKFLOWS } from '../shared/workflows'
 
 const codingPhases = new Set(['development', 'fix', 'refactor'])
-const verificationPhases = new Set(['verify', 'regression', 'checks', 'recheck', 'integration', 'review'])
+const verificationPhases = new Set(['verify', 'regression', 'checks', 'recheck', 'integration'])
 
 export class LeaderEngine {
   constructor(private db: AppDatabase, private changed: () => void) {}
@@ -87,7 +87,9 @@ export class LeaderEngine {
     const phase = WORKFLOWS[change.workflowType][change.currentPhase]
     const tasks = this.db.getPhaseTasks(change.id, phase.id)
     if (!tasks.length || tasks.some(task => task.status !== 'ACCEPTED')) return
-    if (phase.humanMode === 'AUTO') this.advance(change)
-    else this.db.updateChangeState(change.id, 'WAITING_HUMAN')
+    // Only a true IN_LOOP gate should stop the autonomous workflow. ON_LOOP means
+    // humans may intervene while execution continues; REVIEW is an Agent review phase.
+    if (phase.humanMode === 'IN_LOOP') this.db.updateChangeState(change.id, 'WAITING_HUMAN')
+    else this.advance(change)
   }
 }
