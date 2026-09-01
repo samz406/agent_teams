@@ -27,7 +27,7 @@ describe('evidence-driven leader state machine', () => {
     expect(db.getChange(change.id)?.currentPhase).toBe(1)
   })
 
-  it('rejects coding completion without diff and test evidence and creates a blocking issue', () => {
+  it('rejects coding completion without diff and test evidence, blocks the change, and creates a blocking issue', () => {
     const { db, agent, change, leader } = setup(); db.updateChangeState(change.id, 'RUNNING', 3)
     const current = db.getChange(change.id)!; const task = leader.createTask(current, agent, 'Implement change')
     const run = createRun(change.id, agent.id, task.id); db.createRun(run); db.updateRun(run.id, { status: 'COMPLETED', exitCode: 0, finalResponse: 'Done' })
@@ -35,6 +35,7 @@ describe('evidence-driven leader state machine', () => {
     const result = leader.onRunFinished(db.getRun(run.id)!)
     expect(result.accepted).toBe(false)
     expect(db.getTask(task.id)?.status).toBe('REWORK')
+    expect(db.getChange(change.id)?.status).toBe('BLOCKED')
     expect(db.snapshot([]).issues.some(issue => issue.severity === 'BLOCKING' && issue.status === 'OPEN')).toBe(true)
   })
 
