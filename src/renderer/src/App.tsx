@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bot, Boxes, FileText, FolderGit2, History, LayoutDashboard, LoaderCircle, MessageSquareText, Plus, Settings, Workflow } from 'lucide-react'
+import { Activity, Bot, Boxes, Brain, FileText, FolderGit2, GitPullRequest, History, LayoutDashboard, LoaderCircle, MessageSquareText, Plus, Settings, Workflow } from 'lucide-react'
 import { useAppStore } from './store'
 import Dashboard from './pages/Dashboard'
 import NewTask from './pages/NewTask'
 import TaskRoom from './pages/TaskRoom'
 import Agents from './pages/Agents'
 import RuntimeSettings from './pages/RuntimeSettings'
+import Discussions from './pages/Discussions'
+import ConversationRoom from './pages/ConversationRoom'
 import Workflows from './pages/Workflows'
 
-type Route = { page: 'dashboard' | 'new' | 'task' | 'agents' | 'settings' | 'workflows' | 'history'; id?: string }
+type Route = { page: 'dashboard' | 'new' | 'task' | 'discussions' | 'conversation' | 'agents' | 'settings' | 'workflows' | 'history'; id?: string }
 
 export default function App(): import('react').JSX.Element {
   const { ready, load, apply, snapshot, notice } = useAppStore()
   const [route, setRoute] = useState<Route>({ page: 'dashboard' })
   useEffect(() => { void load(); return window.moxt.onRuntimeEvent(apply) }, [load, apply])
   const active = useMemo(() => route.page === 'task' ? snapshot.changes.find(change => change.id === route.id) : undefined, [route, snapshot])
+  const activeConversation = useMemo(() => route.page === 'conversation' ? snapshot.conversations.find(item => item.id === route.id) : undefined, [route, snapshot])
   if (!ready) return <div className="boot"><div className="brand-mark">AT</div><LoaderCircle className="spin"/><span>正在恢复 Agent Teams Runtime…</span></div>
   return <div className="app-shell">
     <aside className="sidebar">
@@ -22,6 +25,7 @@ export default function App(): import('react').JSX.Element {
       <nav>
         <Nav icon={<LayoutDashboard/>} label="工作台" active={route.page === 'dashboard'} onClick={() => setRoute({ page: 'dashboard' })}/>
         <Nav icon={<Plus/>} label="新建任务" active={route.page === 'new'} onClick={() => setRoute({ page: 'new' })}/>
+        <Nav icon={<Brain/>} label="主题讨论" active={route.page === 'discussions' || route.page === 'conversation'} onClick={() => setRoute({ page: 'discussions' })} badge={snapshot.conversations.filter(item => item.status === 'RUNNING').length}/>
         <Nav icon={<Boxes/>} label="任务看板" active={route.page === 'task'} onClick={() => snapshot.changes[0] && setRoute({ page: 'task', id: snapshot.changes[0].id })} badge={snapshot.changes.filter(c => c.status === 'RUNNING').length}/>
         <Nav icon={<MessageSquareText/>} label="会话历史" active={route.page === 'history'} onClick={() => setRoute({ page: 'history' })}/>
         <Nav icon={<Workflow/>} label="工作流模板" active={route.page === 'workflows'} onClick={() => setRoute({ page: 'workflows' })}/>
@@ -35,6 +39,8 @@ export default function App(): import('react').JSX.Element {
       {route.page === 'dashboard' && <Dashboard onNew={() => setRoute({ page: 'new' })} onOpen={id => setRoute({ page: 'task', id })}/>} 
       {route.page === 'new' && <NewTask onCreated={id => setRoute({ page: 'task', id })}/>} 
       {route.page === 'task' && active && <TaskRoom change={active}/>} 
+      {route.page === 'discussions' && <Discussions onOpen={id => setRoute({ page: 'conversation', id })}/>} 
+      {route.page === 'conversation' && activeConversation && <ConversationRoom conversation={activeConversation} onBack={() => setRoute({ page: 'discussions' })} onOpenTask={id => setRoute({ page: 'task', id })}/>} 
       {route.page === 'agents' && <Agents/>}
       {route.page === 'settings' && <RuntimeSettings/>}
       {route.page === 'workflows' && <Workflows/>} 

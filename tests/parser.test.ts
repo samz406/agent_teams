@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractFinalResponse, extractSessionId, extractTeamActions } from '../src/main/runtime/parser'
+import { extractFinalResponse, extractSessionId, extractTeamActions, extractTokenUsage } from '../src/main/runtime/parser'
 
 describe('real runtime output parser', () => {
   it('extracts native session identity and final response from JSONL', () => {
@@ -10,6 +10,11 @@ describe('real runtime output parser', () => {
     ].join('\n')
     expect(extractSessionId(output)).toBe('session-42')
     expect(extractFinalResponse(output)).toContain('Root cause confirmed')
+  })
+
+  it('extracts exact usage when available and estimates when absent', () => {
+    expect(extractTokenUsage('{"usage":{"input_tokens":120,"output_tokens":45}}', 'prompt', 'answer')).toEqual({ inputTokens: 120, outputTokens: 45 })
+    expect(extractTokenUsage('plain', '123456', '123')).toEqual({ inputTokens: 2, outputTokens: 1 })
   })
 
   it('accepts only bounded, valid team delegation actions', () => {

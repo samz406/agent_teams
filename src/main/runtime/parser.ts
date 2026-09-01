@@ -43,6 +43,25 @@ export function extractFinalResponse(output: string): string {
   return text.join('\n').trim().slice(-20000) || 'CLI 已结束，但没有返回可解析的 Final Response。请打开 Run 查看原始输出。'
 }
 
+export function extractTokenUsage(output: string, prompt: string, response: string): { inputTokens: number; outputTokens: number } {
+  let inputTokens = 0; let outputTokens = 0
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return
+    const record = value as Record<string, unknown>
+    const usage = record.usage && typeof record.usage === 'object' ? record.usage as Record<string, unknown> : record
+    const input = usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens ?? usage.promptTokens
+    const outputValue = usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens ?? usage.completionTokens
+    if (typeof input === 'number') inputTokens = Math.max(inputTokens, input)
+    if (typeof outputValue === 'number') outputTokens = Math.max(outputTokens, outputValue)
+    for (const child of Object.values(record)) {
+      if (Array.isArray(child)) child.forEach(visit)
+      else if (child && typeof child === 'object') visit(child)
+    }
+  }
+  for (const line of output.split(/\r?\n/)) { try { visit(JSON.parse(line)) } catch { /* plain output */ } }
+  return { inputTokens: inputTokens || estimateTokens(prompt), outputTokens: outputTokens || estimateTokens(response) }
+}
+
 export function extractTeamActions(output: string): TeamAction[] {
   const actions: TeamAction[] = []
   const blockPattern = /```(team-actions|json)\s*([\s\S]*?)```/gi
@@ -72,3 +91,5 @@ function canonicalAgentName(value: string): string {
   const trimmed = value.trim()
   return agentAliases[trimmed.toLowerCase()] ?? trimmed
 }
+
+const estimateTokens = (value: string): number => Math.max(1, Math.ceil(value.length / 3))

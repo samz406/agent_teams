@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { Agent, AgentSession, AgentWorkspaceBinding, AppSnapshot, Artifact, Change, CreateAgentInput, CreateChangeInput, Evidence, Handoff, HumanIntervention, Issue, IssueStatus, Message, Run, RuntimeInfo, Task, TaskStatus, Workspace, Workstream } from '../shared/contracts'
+import type { Agent, AgentSession, AgentWorkspaceBinding, AppSnapshot, Artifact, Change, Conversation, ConversationDeliverable, ConversationMemory, ConversationParticipant, ConversationRound, ConversationStatus, ConversationTurn, CreateAgentInput, CreateChangeInput, CreateConversationInput, Evidence, Handoff, HumanIntervention, Issue, IssueStatus, Message, Run, RuntimeInfo, Task, TaskStatus, Workspace, Workstream } from '../shared/contracts'
 
 const now = (): string => new Date().toISOString()
 const json = (value: unknown): string => JSON.stringify(value)
@@ -105,12 +105,46 @@ export class AppDatabase {
         id TEXT PRIMARY KEY, change_id TEXT NOT NULL, target_agent_id TEXT, affected_run_id TEXT,
         reason TEXT NOT NULL, new_constraints TEXT NOT NULL, operator TEXT NOT NULL, created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS t_conversation (
+        id TEXT PRIMARY KEY, number INTEGER NOT NULL UNIQUE, title TEXT NOT NULL, topic TEXT NOT NULL,
+        background TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL, current_round INTEGER NOT NULL,
+        max_rounds INTEGER NOT NULL, max_messages INTEGER NOT NULL, max_tokens INTEGER NOT NULL,
+        message_count INTEGER NOT NULL, token_used INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS t_conversation_participant (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, agent_id TEXT NOT NULL, role_name TEXT NOT NULL,
+        role_prompt TEXT NOT NULL, speaking_order INTEGER NOT NULL, is_leader INTEGER NOT NULL,
+        enabled INTEGER NOT NULL, native_session_id TEXT, created_at TEXT NOT NULL,
+        UNIQUE(conversation_id, agent_id)
+      );
+      CREATE TABLE IF NOT EXISTS t_conversation_round (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, number INTEGER NOT NULL, focus TEXT NOT NULL,
+        status TEXT NOT NULL, created_at TEXT NOT NULL, completed_at TEXT,
+        UNIQUE(conversation_id, number)
+      );
+      CREATE TABLE IF NOT EXISTS t_conversation_turn (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, round_id TEXT, participant_id TEXT, agent_id TEXT,
+        speaker_type TEXT NOT NULL, speaker_name TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, error TEXT,
+        created_at TEXT NOT NULL, completed_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS t_conversation_memory (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL UNIQUE, version INTEGER NOT NULL, summary TEXT NOT NULL,
+        consensus TEXT NOT NULL, disagreements TEXT NOT NULL, open_questions TEXT NOT NULL,
+        user_preferences TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS t_conversation_deliverable (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL,
+        content TEXT NOT NULL, status TEXT NOT NULL, converted_change_id TEXT, created_at TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_message_change ON t_message(change_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_run_change ON t_run(change_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_event_aggregate ON t_event(aggregate_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_task_change_phase ON t_task(change_id, phase_id, status);
       CREATE INDEX IF NOT EXISTS idx_issue_change ON t_issue(change_id, status, severity);
       CREATE INDEX IF NOT EXISTS idx_session_agent ON t_agent_session(change_id, agent_id);
+      CREATE INDEX IF NOT EXISTS idx_conversation_status ON t_conversation(status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_conversation_turn ON t_conversation_turn(conversation_id, created_at);
     `)
     this.ensureColumn('t_run', 'task_id', 'TEXT')
     this.ensureColumn('t_run', 'agent_session_id', 'TEXT')
@@ -136,6 +170,10 @@ export class AppDatabase {
       }
       this.db.prepare("UPDATE t_agent SET status='IDLE', current_run_id=NULL WHERE status='RUNNING'").run()
       this.db.prepare("UPDATE t_workstream SET status='BLOCKED', updated_at=? WHERE id IN (SELECT DISTINCT workstream_id FROM t_task WHERE status='BLOCKED' AND workstream_id IS NOT NULL)").run(recoveredAt)
+      this.db.prepare("UPDATE t_conversation SET status='PAUSED', updated_at=? WHERE status='RUNNING'").run(recoveredAt)
+      this.db.prepare("UPDATE t_conversation_round SET status='INTERRUPTED', completed_at=? WHERE status='RUNNING'").run(recoveredAt)
+      this.db.prepare("UPDATE t_conversation_turn SET status='FAILED', error='Runtime process restarted', completed_at=? WHERE status IN ('QUEUED','RUNNING')").run(recoveredAt)
+      this.db.prepare("UPDATE t_conversation SET current_round=COALESCE((SELECT MAX(number) FROM t_conversation_round WHERE conversation_id=t_conversation.id),current_round) WHERE status='PAUSED'").run()
     })
     tx()
   }
@@ -167,7 +205,13 @@ export class AppDatabase {
       agentSessions: (this.db.prepare('SELECT * FROM t_agent_session ORDER BY created_at').all() as Record<string, unknown>[]).map(mapAgentSession),
       handoffs: (this.db.prepare('SELECT * FROM t_handoff ORDER BY created_at').all() as Record<string, unknown>[]).map(mapHandoff),
       issues: (this.db.prepare('SELECT * FROM t_issue ORDER BY created_at').all() as Record<string, unknown>[]).map(mapIssue),
-      interventions: (this.db.prepare('SELECT * FROM t_human_intervention ORDER BY created_at').all() as Record<string, unknown>[]).map(mapIntervention)
+      interventions: (this.db.prepare('SELECT * FROM t_human_intervention ORDER BY created_at').all() as Record<string, unknown>[]).map(mapIntervention),
+      conversations: (this.db.prepare('SELECT * FROM t_conversation ORDER BY updated_at DESC').all() as Record<string, unknown>[]).map(mapConversation),
+      conversationParticipants: (this.db.prepare('SELECT * FROM t_conversation_participant ORDER BY speaking_order').all() as Record<string, unknown>[]).map(mapConversationParticipant),
+      conversationRounds: (this.db.prepare('SELECT * FROM t_conversation_round ORDER BY conversation_id,number').all() as Record<string, unknown>[]).map(mapConversationRound),
+      conversationTurns: (this.db.prepare('SELECT * FROM t_conversation_turn ORDER BY created_at').all() as Record<string, unknown>[]).map(mapConversationTurn),
+      conversationMemories: (this.db.prepare('SELECT * FROM t_conversation_memory ORDER BY updated_at').all() as Record<string, unknown>[]).map(mapConversationMemory),
+      conversationDeliverables: (this.db.prepare('SELECT * FROM t_conversation_deliverable ORDER BY created_at DESC').all() as Record<string, unknown>[]).map(mapConversationDeliverable)
     }
   }
 
@@ -338,6 +382,77 @@ export class AppDatabase {
     this.event('change', changeId, `CHANGE_${status}`, { phase })
   }
 
+  createConversation(input: CreateConversationInput): Conversation {
+    const leaders = input.participants.filter(item => item.isLeader)
+    if (input.participants.length < 2 || input.participants.length > 6) throw new Error('主题讨论需要 2～6 个参与角色')
+    if (leaders.length !== 1) throw new Error('主题讨论必须且只能有一个 Leader')
+    if (new Set(input.participants.map(item => item.agentId)).size !== input.participants.length) throw new Error('同一个 Agent 不能重复加入讨论')
+    const number = ((this.db.prepare('SELECT MAX(number) AS n FROM t_conversation').get() as { n: number | null }).n ?? 0) + 1
+    const time = now()
+    const value: Conversation = { id: randomUUID(), number, title: input.title.trim(), topic: input.topic.trim(), background: input.background.trim(), mode: input.mode, status: 'DRAFT', currentRound: 0, maxRounds: clamp(input.maxRounds, 1, 10), maxMessages: clamp(input.maxMessages, input.participants.length, 100), maxTokens: clamp(input.maxTokens, 1000, 1_000_000), messageCount: 0, tokenUsed: 0, createdAt: time, updatedAt: time }
+    const tx = this.db.transaction(() => {
+      this.db.prepare(`INSERT INTO t_conversation VALUES (@id,@number,@title,@topic,@background,@mode,@status,@currentRound,@maxRounds,@maxMessages,@maxTokens,@messageCount,@tokenUsed,@createdAt,@updatedAt)`).run(value)
+      input.participants.forEach((participant, index) => {
+        const agent = this.getAgent(participant.agentId)
+        if (!agent) throw new Error(`Agent ${participant.agentId} 不存在`)
+        this.db.prepare('INSERT INTO t_conversation_participant VALUES (?,?,?,?,?,?,?,?,?,?)').run(randomUUID(), value.id, participant.agentId, participant.roleName.trim() || agent.name, participant.rolePrompt.trim(), index, participant.isLeader ? 1 : 0, 1, null, time)
+      })
+      this.db.prepare('INSERT INTO t_conversation_memory VALUES (?,?,?,?,?,?,?,?,?)').run(randomUUID(), value.id, 1, '', json([]), json([]), json([]), json([]), time)
+      this.event('conversation', value.id, 'CONVERSATION_CREATED', input)
+    })
+    tx(); return value
+  }
+
+  getConversation(id: string): Conversation | undefined { const row = this.db.prepare('SELECT * FROM t_conversation WHERE id=?').get(id) as Record<string, unknown> | undefined; return row ? mapConversation(row) : undefined }
+  getConversationParticipants(id: string): ConversationParticipant[] { return (this.db.prepare('SELECT * FROM t_conversation_participant WHERE conversation_id=? AND enabled=1 ORDER BY speaking_order').all(id) as Record<string, unknown>[]).map(mapConversationParticipant) }
+  getConversationTurns(id: string, limit?: number): ConversationTurn[] {
+    const rows = limit
+      ? this.db.prepare('SELECT * FROM (SELECT * FROM t_conversation_turn WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?) ORDER BY created_at').all(id, limit)
+      : this.db.prepare('SELECT * FROM t_conversation_turn WHERE conversation_id=? ORDER BY created_at').all(id)
+    return (rows as Record<string, unknown>[]).map(mapConversationTurn)
+  }
+  getConversationMemory(id: string): ConversationMemory | undefined { const row = this.db.prepare('SELECT * FROM t_conversation_memory WHERE conversation_id=?').get(id) as Record<string, unknown> | undefined; return row ? mapConversationMemory(row) : undefined }
+  getConversationDeliverables(id: string): ConversationDeliverable[] { return (this.db.prepare('SELECT * FROM t_conversation_deliverable WHERE conversation_id=? ORDER BY created_at DESC').all(id) as Record<string, unknown>[]).map(mapConversationDeliverable) }
+
+  updateConversationStatus(id: string, status: ConversationStatus): void { this.db.prepare('UPDATE t_conversation SET status=?,updated_at=? WHERE id=?').run(status, now(), id); this.event('conversation', id, `CONVERSATION_${status}`, {}) }
+  updateConversationProgress(id: string, round: number, addedMessages: number, addedTokens: number): void { this.db.prepare('UPDATE t_conversation SET current_round=?,message_count=message_count+?,token_used=token_used+?,updated_at=? WHERE id=?').run(round, addedMessages, addedTokens, now(), id) }
+
+  createConversationRound(conversationId: string, number: number, focus: string): ConversationRound {
+    const value: ConversationRound = { id: randomUUID(), conversationId, number, focus, status: 'RUNNING', createdAt: now(), completedAt: null }
+    this.db.prepare('INSERT INTO t_conversation_round VALUES (@id,@conversationId,@number,@focus,@status,@createdAt,@completedAt)').run(value); return value
+  }
+  finishConversationRound(id: string, status: ConversationRound['status']): void { this.db.prepare('UPDATE t_conversation_round SET status=?,completed_at=? WHERE id=?').run(status, now(), id) }
+  interruptActiveConversationRound(conversationId: string): void {
+    const row = this.db.prepare("SELECT id,number FROM t_conversation_round WHERE conversation_id=? AND status='RUNNING' ORDER BY number DESC LIMIT 1").get(conversationId) as { id: string; number: number } | undefined
+    if (!row) return
+    this.finishConversationRound(row.id, 'INTERRUPTED'); this.updateConversationProgress(conversationId, row.number, 0, 0)
+  }
+
+  createConversationTurn(input: Omit<ConversationTurn, 'id' | 'createdAt' | 'completedAt' | 'inputTokens' | 'outputTokens' | 'error'>): ConversationTurn {
+    const value: ConversationTurn = { ...input, id: randomUUID(), inputTokens: 0, outputTokens: 0, error: null, createdAt: now(), completedAt: input.status === 'COMPLETED' ? now() : null }
+    this.db.prepare('INSERT INTO t_conversation_turn VALUES (@id,@conversationId,@roundId,@participantId,@agentId,@speakerType,@speakerName,@content,@status,@inputTokens,@outputTokens,@error,@createdAt,@completedAt)').run(value)
+    return value
+  }
+  updateConversationTurn(id: string, patch: Partial<Pick<ConversationTurn, 'content' | 'status' | 'inputTokens' | 'outputTokens' | 'error'>>): void {
+    const columns: Record<string, string> = { content: 'content', status: 'status', inputTokens: 'input_tokens', outputTokens: 'output_tokens', error: 'error' }
+    const fields: string[] = []; const values: Record<string, unknown> = { id }
+    for (const [key, value] of Object.entries(patch)) { fields.push(`${columns[key]}=@${key}`); values[key] = value }
+    if (patch.status && ['COMPLETED','FAILED','CANCELLED'].includes(patch.status)) { fields.push('completed_at=@completedAt'); values.completedAt = now() }
+    if (fields.length) this.db.prepare(`UPDATE t_conversation_turn SET ${fields.join(',')} WHERE id=@id`).run(values)
+  }
+  updateConversationParticipantSession(id: string, sessionId: string | null): void { if (sessionId) this.db.prepare('UPDATE t_conversation_participant SET native_session_id=? WHERE id=?').run(sessionId, id) }
+
+  updateConversationMemory(conversationId: string, patch: Pick<ConversationMemory, 'summary' | 'consensus' | 'disagreements' | 'openQuestions' | 'userPreferences'>): void {
+    this.db.prepare('UPDATE t_conversation_memory SET version=version+1,summary=?,consensus=?,disagreements=?,open_questions=?,user_preferences=?,updated_at=? WHERE conversation_id=?').run(patch.summary, json(patch.consensus), json(patch.disagreements), json(patch.openQuestions), json(patch.userPreferences), now(), conversationId)
+  }
+
+  createConversationDeliverable(conversationId: string, type: ConversationDeliverable['type'], title: string, content: string): ConversationDeliverable {
+    const value: ConversationDeliverable = { id: randomUUID(), conversationId, type, title, content, status: 'FINAL', convertedChangeId: null, createdAt: now() }
+    this.db.prepare('INSERT INTO t_conversation_deliverable VALUES (@id,@conversationId,@type,@title,@content,@status,@convertedChangeId,@createdAt)').run(value)
+    this.event('conversation', conversationId, 'CONVERSATION_DELIVERABLE_CREATED', { id: value.id, type }); return value
+  }
+  markConversationConverted(deliverableId: string, changeId: string): void { this.db.prepare('UPDATE t_conversation_deliverable SET converted_change_id=? WHERE id=?').run(changeId, deliverableId) }
+
   addEvidence(runId: string, input: Omit<Evidence, 'id' | 'runId' | 'createdAt'>): Evidence {
     const value: Evidence = { ...input, id: randomUUID(), runId, createdAt: now() }
     this.db.prepare('INSERT INTO t_evidence VALUES (@id,@runId,@type,@title,@status,@detail,@createdAt)').run(value)
@@ -383,6 +498,7 @@ export class AppDatabase {
 }
 
 const nullable = (value: unknown): string | null => value === null || value === undefined ? null : String(value)
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, Math.round(value)))
 const fullPermissions = (write: boolean): Agent['permissions'] => ({ read: true, write, shell: true, git: true, network: true })
 const mapWorkspace = (r: Record<string, unknown>): Workspace => ({ id: String(r.id), name: String(r.name), path: String(r.path), repoRoot: nullable(r.repo_root), branch: nullable(r.branch), baseCommit: nullable(r.base_commit), createdAt: String(r.created_at) })
 const mapAgent = (r: Record<string, unknown>): Agent => ({ id: String(r.id), name: String(r.name), icon: String(r.icon), description: String(r.description), responsibility: String(r.responsibility), qualityBar: parse(String(r.quality_bar), []), runtime: r.runtime as Agent['runtime'], command: nullable(r.command), argsTemplate: nullable(r.args_template), workspaceIds: parse(String(r.workspace_ids), []), permissions: parse(String(r.permissions), fullPermissions(false)), status: r.status as Agent['status'], currentRunId: nullable(r.current_run_id), createdAt: String(r.created_at) })
@@ -397,3 +513,9 @@ const mapAgentSession = (r: Record<string, unknown>): AgentSession => ({ id: Str
 const mapHandoff = (r: Record<string, unknown>): Handoff => ({ id: String(r.id), changeId: String(r.change_id), fromTaskId: nullable(r.from_task_id), fromAgentId: nullable(r.from_agent_id), toTaskId: nullable(r.to_task_id), toAgentId: nullable(r.to_agent_id), deliverable: String(r.deliverable), evidenceIds: parse(String(r.evidence_ids), []), status: r.status as Handoff['status'], createdAt: String(r.created_at), acceptedAt: nullable(r.accepted_at) })
 const mapIssue = (r: Record<string, unknown>): Issue => ({ id: String(r.id), changeId: String(r.change_id), taskId: nullable(r.task_id), ownerAgentId: nullable(r.owner_agent_id), title: String(r.title), description: String(r.description), severity: r.severity as Issue['severity'], status: r.status as Issue['status'], sourceEvidenceId: nullable(r.source_evidence_id), resolution: nullable(r.resolution), createdAt: String(r.created_at), updatedAt: String(r.updated_at) })
 const mapIntervention = (r: Record<string, unknown>): HumanIntervention => ({ id: String(r.id), changeId: String(r.change_id), targetAgentId: nullable(r.target_agent_id), affectedRunId: nullable(r.affected_run_id), reason: String(r.reason), newConstraints: String(r.new_constraints), operator: String(r.operator), createdAt: String(r.created_at) })
+const mapConversation = (r: Record<string, unknown>): Conversation => ({ id: String(r.id), number: Number(r.number), title: String(r.title), topic: String(r.topic), background: String(r.background), mode: r.mode as Conversation['mode'], status: r.status as Conversation['status'], currentRound: Number(r.current_round), maxRounds: Number(r.max_rounds), maxMessages: Number(r.max_messages), maxTokens: Number(r.max_tokens), messageCount: Number(r.message_count), tokenUsed: Number(r.token_used), createdAt: String(r.created_at), updatedAt: String(r.updated_at) })
+const mapConversationParticipant = (r: Record<string, unknown>): ConversationParticipant => ({ id: String(r.id), conversationId: String(r.conversation_id), agentId: String(r.agent_id), roleName: String(r.role_name), rolePrompt: String(r.role_prompt), speakingOrder: Number(r.speaking_order), isLeader: Boolean(r.is_leader), enabled: Boolean(r.enabled), nativeSessionId: nullable(r.native_session_id), createdAt: String(r.created_at) })
+const mapConversationRound = (r: Record<string, unknown>): ConversationRound => ({ id: String(r.id), conversationId: String(r.conversation_id), number: Number(r.number), focus: String(r.focus), status: r.status as ConversationRound['status'], createdAt: String(r.created_at), completedAt: nullable(r.completed_at) })
+const mapConversationTurn = (r: Record<string, unknown>): ConversationTurn => ({ id: String(r.id), conversationId: String(r.conversation_id), roundId: nullable(r.round_id), participantId: nullable(r.participant_id), agentId: nullable(r.agent_id), speakerType: r.speaker_type as ConversationTurn['speakerType'], speakerName: String(r.speaker_name), content: String(r.content), status: r.status as ConversationTurn['status'], inputTokens: Number(r.input_tokens), outputTokens: Number(r.output_tokens), error: nullable(r.error), createdAt: String(r.created_at), completedAt: nullable(r.completed_at) })
+const mapConversationMemory = (r: Record<string, unknown>): ConversationMemory => ({ id: String(r.id), conversationId: String(r.conversation_id), version: Number(r.version), summary: String(r.summary), consensus: parse(String(r.consensus), []), disagreements: parse(String(r.disagreements), []), openQuestions: parse(String(r.open_questions), []), userPreferences: parse(String(r.user_preferences), []), updatedAt: String(r.updated_at) })
+const mapConversationDeliverable = (r: Record<string, unknown>): ConversationDeliverable => ({ id: String(r.id), conversationId: String(r.conversation_id), type: r.type as ConversationDeliverable['type'], title: String(r.title), content: String(r.content), status: r.status as ConversationDeliverable['status'], convertedChangeId: nullable(r.converted_change_id), createdAt: String(r.created_at) })

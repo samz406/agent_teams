@@ -1,9 +1,10 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'node:path'
+import { writeFile } from 'node:fs/promises'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { inspectWorkspace } from './runtime/git'
 import { RuntimeClient } from './runtime-client'
-import type { AppSnapshot, CreateAgentInput, CreateChangeInput, IssueStatus, RuntimeEvent, UpdateAgentInput } from '../shared/contracts'
+import type { AppSnapshot, ConvertConversationInput, CreateAgentInput, CreateChangeInput, CreateConversationInput, IssueStatus, RuntimeEvent, UpdateAgentInput } from '../shared/contracts'
 
 let window: BrowserWindow | null = null
 let runtime: RuntimeClient
@@ -35,6 +36,18 @@ function registerIpc(): void {
   ipcMain.handle('artifact:approve', (_event, artifactId: string, approve: boolean, feedback?: string) => runtime.request({ type: 'artifact.approve', artifactId, approve, feedback }))
   ipcMain.handle('workflow:advance', (_event, changeId: string) => runtime.request({ type: 'workflow.advance', changeId }))
   ipcMain.handle('issue:update', (_event, issueId: string, status: IssueStatus, resolution?: string) => runtime.request({ type: 'issue.update', issueId, status, resolution }))
+  ipcMain.handle('conversation:create', (_event, input: CreateConversationInput) => runtime.request({ type: 'conversation.create', input }))
+  ipcMain.handle('conversation:control', (_event, conversationId: string, action: 'start' | 'pause' | 'resume' | 'end') => runtime.request({ type: 'conversation.control', conversationId, action }))
+  ipcMain.handle('conversation:message', (_event, conversationId: string, content: string, targetParticipantId?: string) => runtime.request({ type: 'conversation.message', conversationId, content, targetParticipantId }))
+  ipcMain.handle('conversation:summarize', (_event, conversationId: string, deliverableType) => runtime.request({ type: 'conversation.summarize', conversationId, deliverableType }))
+  ipcMain.handle('conversation:convert', (_event, conversationId: string, input: ConvertConversationInput) => runtime.request({ type: 'conversation.convert', conversationId, input }))
+  ipcMain.handle('conversation:export', async (_event, conversationId: string) => {
+    const value = await runtime.request<{ title: string; content: string }>({ type: 'conversation.export-markdown', conversationId })
+    const safeName = value.title.replace(/[\\/:*?"<>|]/g, '-').slice(0, 100)
+    const result = await dialog.showSaveDialog(window!, { title: '导出讨论记录', defaultPath: safeName, filters: [{ name: 'Markdown', extensions: ['md'] }] })
+    if (result.canceled || !result.filePath) return false
+    await writeFile(result.filePath, value.content, 'utf8'); return true
+  })
 }
 
 app.whenReady().then(() => {

@@ -37,7 +37,6 @@ const phaseAgentPreferences: Record<string, string[]> = {
 }
 
 export class TeamRunManager {
-  private queue = new RuntimeQueue(3)
   private processes = new Map<string, { child: ChildProcessWithoutNullStreams; agent: Agent }>()
   private buffers = new Map<string, { stdout: string; stderr: string }>()
   private cancelling = new Set<string>()
@@ -45,7 +44,7 @@ export class TeamRunManager {
   private runtimes: RuntimeInfo[] = []
   private evidence = new EvidenceService()
 
-  constructor(private db: AppDatabase, private registry: AdapterRegistry, private workspaces: WorkspaceManager, private leader: LeaderEngine, private publish: Publish, private changed: () => void) {}
+  constructor(private db: AppDatabase, private registry: AdapterRegistry, private workspaces: WorkspaceManager, private leader: LeaderEngine, private publish: Publish, private changed: () => void, private queue = new RuntimeQueue(3)) {}
   setRuntimes(runtimes: RuntimeInfo[]): void { this.runtimes = runtimes }
   getRuntimes(): RuntimeInfo[] { return this.runtimes }
   queueStats(): ReturnType<RuntimeQueue['stats']> { return this.queue.stats() }
@@ -146,7 +145,7 @@ export class TeamRunManager {
     this.db.createRun(run); this.db.updateTask(task.id, 'QUEUED', id)
     if (options.resumeNative) this.resumeRuns.add(id)
     this.publish({ type: 'run.status', runId: id, status: 'QUEUED' }); this.changed()
-    this.queue.enqueue(id, () => this.execute(run, agent, effectivePermissions, session.nativeSessionId))
+    void this.queue.enqueue(id, () => this.execute(run, agent, effectivePermissions, session.nativeSessionId))
     return id
   }
 

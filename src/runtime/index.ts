@@ -3,10 +3,12 @@ import { AppDatabase } from '../main/database'
 import { WORKFLOWS } from '../shared/workflows'
 import type { Agent, AppSnapshot, Change, RuntimeEvent, RuntimeProcessMessage, RuntimeRequest, RuntimeRequestEnvelope } from '../shared/contracts'
 import { AdapterRegistry } from './adapters'
+import { AdapterConversationExecutor, ConversationEngine } from './conversation-engine'
 import { updateAgentRecord } from './agent-store'
 import { LeaderEngine } from './leader-engine'
 import { TeamRunManager } from './run-manager'
 import { WorkspaceManager } from './workspace-manager'
+import { RuntimeQueue } from './runtime-queue'
 
 interface ParentPort { postMessage(message: RuntimeProcessMessage): void; on(event: 'message', listener: (event: { data: RuntimeRequestEnvelope }) => void): void }
 const port = (process as NodeJS.Process & { parentPort?: ParentPort }).parentPort
@@ -18,15 +20,18 @@ if (!dataDirectory) throw new Error('Runtime 数据目录未配置')
 const databasePath = join(dataDirectory, 'database', 'moxt.db')
 const db = new AppDatabase(databasePath)
 const registry = new AdapterRegistry()
+const runtimeQueue = new RuntimeQueue(3)
 const publish = (event: RuntimeEvent): void => port.postMessage({ event })
 let runManager: TeamRunManager
+let conversationEngine: ConversationEngine
 const changed = (): void => publish({ type: 'snapshot.changed', snapshot: db.snapshot(runManager?.getRuntimes() ?? []) })
 const leader = new LeaderEngine(db, changed)
-runManager = new TeamRunManager(db, registry, new WorkspaceManager(dataDirectory), leader, publish, changed)
+runManager = new TeamRunManager(db, registry, new WorkspaceManager(dataDirectory), leader, publish, changed, runtimeQueue)
+conversationEngine = new ConversationEngine(db, new AdapterConversationExecutor(registry, () => runManager.getRuntimes(), runtimeQueue, dataDirectory, publish), changed)
 const initialized = registry.detect().then(runtimes => { runManager.setRuntimes(runtimes); changed() })
 
-process.on('SIGTERM', () => { void runManager.shutdown().finally(() => process.exit(0)) })
-process.on('SIGINT', () => { void runManager.shutdown().finally(() => process.exit(0)) })
+process.on('SIGTERM', () => { void Promise.all([runManager.shutdown(), conversationEngine.shutdown()]).finally(() => process.exit(0)) })
+process.on('SIGINT', () => { void Promise.all([runManager.shutdown(), conversationEngine.shutdown()]).finally(() => process.exit(0)) })
 
 port.on('message', event => {
   const envelope = event.data
@@ -61,7 +66,35 @@ async function dispatch(request: RuntimeRequest): Promise<unknown> {
       return null
     }
     case 'issue.update': db.updateIssue(request.issueId, request.status, request.resolution); changed(); return null
+    case 'conversation.create': {
+      if (!request.input.title.trim() || !request.input.topic.trim()) throw new Error('讨论标题和主题不能为空')
+      const value = db.createConversation(request.input); changed(); return value
+    }
+    case 'conversation.control': {
+      if (request.action === 'start' || request.action === 'resume') conversationEngine.start(request.conversationId)
+      else if (request.action === 'pause') await conversationEngine.pause(request.conversationId)
+      else await conversationEngine.end(request.conversationId)
+      return null
+    }
+    case 'conversation.message': conversationEngine.sendMessage(request.conversationId, request.content, request.targetParticipantId); return null
+    case 'conversation.summarize': await conversationEngine.summarize(request.conversationId, request.deliverableType); return null
+    case 'conversation.export-markdown': return conversationEngine.exportMarkdown(request.conversationId)
+    case 'conversation.convert': return convertConversation(request.conversationId, request.input)
   }
+}
+
+function convertConversation(conversationId: string, input: Extract<RuntimeRequest, { type: 'conversation.convert' }>['input']): unknown {
+  const conversation = db.getConversation(conversationId)
+  const workspace = db.getWorkspace(input.workspaceId)
+  if (!conversation || !workspace) throw new Error('讨论或目标 Workspace 不存在')
+  const participants = db.getConversationParticipants(conversationId)
+  const allowed = new Set(participants.map(item => item.agentId))
+  if (!input.agentIds.length || input.agentIds.some(id => !allowed.has(id))) throw new Error('转任务只能选择当前讨论中的 Agent')
+  if (!workspace.repoRoot || !workspace.baseCommit) throw new Error('转为正式任务需要选择 Git Workspace，以便写 Agent 使用独立 Worktree')
+  const deliverable = db.getConversationDeliverables(conversationId)[0]
+  const change = db.createChange({ title: conversation.title, description: deliverable?.content || conversationEngine.exportMarkdown(conversationId).content, workflowType: input.workflowType, priority: input.priority, workspaceIds: [workspace.id], agentIds: input.agentIds, agentBindings: input.agentIds.map(agentId => { const agent = db.getAgent(agentId); if (!agent) throw new Error(`Agent ${agentId} 不存在`); return { agentId, workspaceId: workspace.id, permissions: agent.permissions } }), tags: ['from-discussion'] })
+  const source = deliverable ?? db.createConversationDeliverable(conversationId, 'MARKDOWN', `${conversation.title} · 讨论记录`, conversationEngine.exportMarkdown(conversationId).content)
+  db.markConversationConverted(source.id, change.id); changed(); return change
 }
 
 async function sendMessage(changeId: string, content: string, targetAgentId?: string): Promise<void> {

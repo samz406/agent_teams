@@ -6,6 +6,8 @@ export type ArtifactStatus = 'DRAFT' | 'REVIEW' | 'APPROVED' | 'DEPRECATED'
 export type TaskStatus = 'ASSIGNED' | 'QUEUED' | 'RUNNING' | 'RUN_COMPLETED' | 'VERIFYING' | 'ACCEPTED' | 'REWORK' | 'BLOCKED' | 'CANCELLED'
 export type IssueStatus = 'OPEN' | 'FIXING' | 'RESOLVED' | 'VERIFIED' | 'WONT_FIX'
 export type PermissionSet = { read: boolean; write: boolean; shell: boolean; git: boolean; network: boolean }
+export type ConversationMode = 'roundtable' | 'brainstorm' | 'debate' | 'consultation'
+export type ConversationStatus = 'DRAFT' | 'RUNNING' | 'PAUSED' | 'READY_TO_SUMMARIZE' | 'COMPLETED' | 'FAILED'
 
 export interface RuntimeInfo {
   type: RuntimeType
@@ -222,6 +224,87 @@ export interface Artifact {
   approvedAt: string | null
 }
 
+export interface Conversation {
+  id: string
+  number: number
+  title: string
+  topic: string
+  background: string
+  mode: ConversationMode
+  status: ConversationStatus
+  currentRound: number
+  maxRounds: number
+  maxMessages: number
+  maxTokens: number
+  messageCount: number
+  tokenUsed: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ConversationParticipant {
+  id: string
+  conversationId: string
+  agentId: string
+  roleName: string
+  rolePrompt: string
+  speakingOrder: number
+  isLeader: boolean
+  enabled: boolean
+  nativeSessionId: string | null
+  createdAt: string
+}
+
+export interface ConversationRound {
+  id: string
+  conversationId: string
+  number: number
+  focus: string
+  status: 'RUNNING' | 'COMPLETED' | 'INTERRUPTED'
+  createdAt: string
+  completedAt: string | null
+}
+
+export interface ConversationTurn {
+  id: string
+  conversationId: string
+  roundId: string | null
+  participantId: string | null
+  agentId: string | null
+  speakerType: 'human' | 'agent' | 'leader' | 'system'
+  speakerName: string
+  content: string
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+  inputTokens: number
+  outputTokens: number
+  error: string | null
+  createdAt: string
+  completedAt: string | null
+}
+
+export interface ConversationMemory {
+  id: string
+  conversationId: string
+  version: number
+  summary: string
+  consensus: string[]
+  disagreements: string[]
+  openQuestions: string[]
+  userPreferences: string[]
+  updatedAt: string
+}
+
+export interface ConversationDeliverable {
+  id: string
+  conversationId: string
+  type: 'SUMMARY' | 'ACTION_PLAN' | 'DESIGN_BRIEF' | 'PRD' | 'DECISION_MATRIX' | 'MARKDOWN'
+  title: string
+  content: string
+  status: 'DRAFT' | 'FINAL'
+  convertedChangeId: string | null
+  createdAt: string
+}
+
 export interface AppSnapshot {
   changes: Change[]
   agents: Agent[]
@@ -237,6 +320,12 @@ export interface AppSnapshot {
   handoffs: Handoff[]
   issues: Issue[]
   interventions: HumanIntervention[]
+  conversations: Conversation[]
+  conversationParticipants: ConversationParticipant[]
+  conversationRounds: ConversationRound[]
+  conversationTurns: ConversationTurn[]
+  conversationMemories: ConversationMemory[]
+  conversationDeliverables: ConversationDeliverable[]
 }
 
 export interface CreateChangeInput {
@@ -254,11 +343,30 @@ export interface CreateChangeInput {
 export interface CreateAgentInput extends Omit<Agent, 'id' | 'status' | 'createdAt' | 'currentRunId'> {}
 export interface UpdateAgentInput extends CreateAgentInput { id: string }
 
+export interface CreateConversationInput {
+  title: string
+  topic: string
+  background: string
+  mode: ConversationMode
+  maxRounds: number
+  maxMessages: number
+  maxTokens: number
+  participants: Array<{ agentId: string; roleName: string; rolePrompt: string; isLeader: boolean }>
+}
+
+export interface ConvertConversationInput {
+  workspaceId: string
+  agentIds: string[]
+  workflowType: WorkflowType
+  priority: Change['priority']
+}
+
 export type RuntimeEvent =
   | { type: 'snapshot.changed'; snapshot: AppSnapshot }
   | { type: 'run.activity'; runId: string; stream: 'stdout' | 'stderr'; chunk: string }
   | { type: 'run.status'; runId: string; status: RunStatus }
   | { type: 'runtime.notice'; level: 'info' | 'error'; message: string }
+  | { type: 'conversation.activity'; conversationId: string; turnId: string; chunk: string }
 
 export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>
@@ -273,6 +381,12 @@ export interface DesktopApi {
   approveArtifact(artifactId: string, approve: boolean, feedback?: string): Promise<void>
   detectRuntimes(): Promise<RuntimeInfo[]>
   updateIssue(issueId: string, status: IssueStatus, resolution?: string): Promise<void>
+  createConversation(input: CreateConversationInput): Promise<Conversation>
+  controlConversation(conversationId: string, action: 'start' | 'pause' | 'resume' | 'end'): Promise<void>
+  sendConversationMessage(conversationId: string, content: string, targetParticipantId?: string): Promise<void>
+  summarizeConversation(conversationId: string, type: ConversationDeliverable['type']): Promise<void>
+  convertConversation(conversationId: string, input: ConvertConversationInput): Promise<Change>
+  exportConversation(conversationId: string): Promise<boolean>
   onRuntimeEvent(listener: (event: RuntimeEvent) => void): () => void
 }
 
@@ -289,6 +403,12 @@ export type RuntimeRequest =
   | { type: 'artifact.approve'; artifactId: string; approve: boolean; feedback?: string }
   | { type: 'workflow.advance'; changeId: string }
   | { type: 'issue.update'; issueId: string; status: IssueStatus; resolution?: string }
+  | { type: 'conversation.create'; input: CreateConversationInput }
+  | { type: 'conversation.control'; conversationId: string; action: 'start' | 'pause' | 'resume' | 'end' }
+  | { type: 'conversation.message'; conversationId: string; content: string; targetParticipantId?: string }
+  | { type: 'conversation.summarize'; conversationId: string; deliverableType: ConversationDeliverable['type'] }
+  | { type: 'conversation.convert'; conversationId: string; input: ConvertConversationInput }
+  | { type: 'conversation.export-markdown'; conversationId: string }
 
 export interface RuntimeRequestEnvelope { id: string; request: RuntimeRequest }
 export type RuntimeResponseEnvelope = { id: string; ok: true; result: unknown } | { id: string; ok: false; error: string }
