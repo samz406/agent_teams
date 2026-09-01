@@ -39,6 +39,19 @@ describe('evidence-driven leader state machine', () => {
     expect(db.snapshot([]).issues.some(issue => issue.severity === 'BLOCKING' && issue.status === 'OPEN')).toBe(true)
   })
 
+  it('accepts a Leader coordination run after child tasks were created and waits for those children', () => {
+    const { db, agent, change, leader } = setup(); db.updateChangeState(change.id, 'RUNNING', 3)
+    const current = db.getChange(change.id)!; const parent = leader.createTask(current, agent, 'Coordinate development')
+    leader.createTask(current, agent, 'Delegated implementation', parent.id)
+    const run = createRun(change.id, agent.id, parent.id); db.createRun(run)
+    db.updateRun(run.id, { status: 'COMPLETED', exitCode: 0, finalResponse: '```json\n[{"agent":"Backend","prompt":"Implement backend"}]\n```' })
+    db.addEvidence(run.id, { type: 'RUNTIME', title: 'Runtime exit', status: 'PASS', detail: 'exit 0' })
+    expect(leader.onRunFinished(db.getRun(run.id)!).accepted).toBe(true)
+    expect(db.getTask(parent.id)?.status).toBe('ACCEPTED')
+    expect(db.getChange(change.id)?.currentPhase).toBe(3)
+    expect(db.getChange(change.id)?.status).toBe('RUNNING')
+  })
+
   it('does not stop a Bug Fix at the ON_LOOP Fix phase after evidence is accepted', () => {
     const { db, agent, change, leader } = setup('bug-fix'); db.updateChangeState(change.id, 'RUNNING', 2)
     const current = db.getChange(change.id)!; const task = leader.createTask(current, agent, 'Fix the reproduced bug')

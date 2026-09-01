@@ -1,5 +1,21 @@
 export interface TeamAction { agent: string; prompt: string }
 
+const agentAliases: Record<string, string> = {
+  backend: 'Code Agent',
+  frontend: 'Code Agent',
+  developer: 'Code Agent',
+  coder: 'Code Agent',
+  'code agent': 'Code Agent',
+  qa: 'QA Agent',
+  tester: 'QA Agent',
+  test: 'QA Agent',
+  'qa agent': 'QA Agent',
+  architect: 'Architect',
+  architecture: 'Architect',
+  leader: 'Leader',
+  lead: 'Leader'
+}
+
 export function extractSessionId(output: string): string | null {
   for (const line of output.split(/\r?\n/)) {
     try {
@@ -28,11 +44,31 @@ export function extractFinalResponse(output: string): string {
 }
 
 export function extractTeamActions(output: string): TeamAction[] {
-  const match = output.match(/```team-actions\s*([\s\S]*?)```/i)
-  if (!match) return []
-  try {
-    const parsed = JSON.parse(match[1]) as unknown
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((item): item is TeamAction => Boolean(item && typeof item.agent === 'string' && typeof item.prompt === 'string')).slice(0, 3)
-  } catch { return [] }
+  const actions: TeamAction[] = []
+  const blockPattern = /```(team-actions|json)\s*([\s\S]*?)```/gi
+  for (const match of output.matchAll(blockPattern)) {
+    try {
+      const parsed = JSON.parse(match[2]) as unknown
+      if (!Array.isArray(parsed) || !parsed.length) continue
+      const valid = parsed.filter((item): item is TeamAction => Boolean(item && typeof item === 'object' && typeof (item as TeamAction).agent === 'string' && typeof (item as TeamAction).prompt === 'string'))
+      // A generic json block is considered delegation only when the whole array is made of team actions.
+      if (match[1].toLowerCase() === 'json' && valid.length !== parsed.length) continue
+      actions.push(...valid)
+    } catch { /* ignore malformed delegation blocks */ }
+  }
+
+  const merged = new Map<string, TeamAction>()
+  for (const action of actions) {
+    const agent = canonicalAgentName(action.agent)
+    const prompt = action.prompt.trim()
+    if (!agent || !prompt) continue
+    const existing = merged.get(agent)
+    merged.set(agent, existing ? { agent, prompt: `${existing.prompt}\n\n--- Additional delegated work ---\n${prompt}` } : { agent, prompt })
+  }
+  return [...merged.values()].slice(0, 3)
+}
+
+function canonicalAgentName(value: string): string {
+  const trimmed = value.trim()
+  return agentAliases[trimmed.toLowerCase()] ?? trimmed
 }
