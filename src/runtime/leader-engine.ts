@@ -31,8 +31,9 @@ export class LeaderEngine {
     const violation = this.verifyTask(change, phase, task, run)
     if (violation) {
       this.db.updateTask(task.id, 'REWORK', run.id)
+      this.db.updateChangeState(change.id, 'BLOCKED')
       this.db.createIssue({ changeId: change.id, taskId: task.id, ownerAgentId: task.assignedAgentId, title: `${task.title} 验收未通过`, description: violation, severity: 'BLOCKING', sourceEvidenceId: run.evidence.find(item => item.status === 'FAIL')?.id ?? null })
-      this.db.addMessage(change.id, 'leader', null, 'Leader', `拒绝验收 ${task.title}：${violation}。Task 已进入 REWORK，并创建 Blocking Issue。`, run.id)
+      this.db.addMessage(change.id, 'leader', null, 'Leader', `拒绝验收 ${task.title}：${violation}。Task 已进入 REWORK，Change 标记为 BLOCKED，并创建 Blocking Issue。可修正 Runtime/代码/测试后点击“启动 / 继续执行”重试。`, run.id)
       this.changed(); return { accepted: false, reason: violation }
     }
     this.db.updateTask(task.id, 'ACCEPTED', run.id)
