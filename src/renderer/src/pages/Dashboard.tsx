@@ -1,15 +1,15 @@
-import { AlertCircle, ArrowRight, CheckCircle2, Clock3, PlayCircle, Plus, Users } from 'lucide-react'
+import { AlertCircle, ArrowRight, CheckCircle2, Clock3, MessageCircleMore, PlayCircle, Plus, Users } from 'lucide-react'
 import { useAppStore } from '../store'
 import { WORKFLOW_LABELS, phasesFor } from '../../../shared/workflows'
 
-export default function Dashboard({ onNew, onOpen }: { onNew(): void; onOpen(id: string): void }): import('react').JSX.Element {
+export default function Dashboard({ onNew, onNewChat, onOpen }: { onNew(): void; onNewChat(): void; onOpen(id: string): void }): import('react').JSX.Element {
   const { snapshot } = useAppStore()
   const running = snapshot.changes.filter(c => c.status === 'RUNNING').length
   const waiting = snapshot.changes.filter(c => c.status === 'WAITING_HUMAN').length
   const done = snapshot.changes.filter(c => c.status === 'DONE').length
   const failed = snapshot.changes.filter(c => ['FAILED', 'BLOCKED'].includes(c.status)).length
   return <section className="page dashboard">
-    <header className="page-header"><div><h1>下午好，Max</h1><p>Agent Teams · AI Team Runtime</p></div><button className="primary" onClick={onNew}><Plus/>新建任务</button></header>
+    <header className="page-header"><div><h1>下午好，Max</h1><p>Agent Teams · AI Team Runtime</p></div><div className="page-actions"><button className="secondary" onClick={onNewChat}><MessageCircleMore/>新建聊天</button><button className="primary" onClick={onNew}><Plus/>新建任务</button></div></header>
     <div className="metric-grid">
       <Metric icon={<PlayCircle/>} label="运行中" value={running} tone="blue"/><Metric icon={<Clock3/>} label="等待人工" value={waiting} tone="amber"/><Metric icon={<CheckCircle2/>} label="今日完成" value={done} tone="green"/><Metric icon={<AlertCircle/>} label="失败/终止" value={failed} tone="red"/>
     </div>
