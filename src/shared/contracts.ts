@@ -178,7 +178,7 @@ export interface Message {
 export interface Evidence {
   id: string
   runId: string
-  type: 'COMMAND' | 'GIT' | 'DIFF' | 'FILE' | 'TEST' | 'RUNTIME'
+  type: 'COMMAND' | 'GIT' | 'DIFF' | 'FILE' | 'TEST' | 'RUNTIME' | 'USAGE'
   title: string
   status: 'PASS' | 'WARN' | 'FAIL' | 'UNVERIFIED'
   detail: string

@@ -1,4 +1,5 @@
 import type { Evidence } from '../shared/contracts'
+import { extractUsageSummary, formatTokens } from '../shared/usage'
 
 export interface DerivedEvidence { type: Evidence['type']; title: string; status: Evidence['status']; detail: string }
 
@@ -14,6 +15,11 @@ export class EvidenceService {
       const combined = `${stdout}\n${stderr}`
       const proof = combined.match(/(?:Tests?|Test Files?)\s*[:：]?\s*(?:\d+\s+)?(?:passed|PASS|通过)[\s\S]{0,500}/i)
       if (proof) evidence.push({ type: 'TEST', title: 'Runtime reported test result', status: exitCode === 0 ? 'PASS' : 'UNVERIFIED', detail: proof[0] })
+    }
+    const usage = extractUsageSummary(stdout)
+    if (usage) {
+      const cost = usage.costUsd === null ? 'cost unavailable' : `~$${usage.costUsd < 0.01 ? usage.costUsd.toFixed(4) : usage.costUsd.toFixed(2)}`
+      evidence.push({ type: 'USAGE', title: `${formatTokens(usage.usage.totalTokens)} tokens · ${cost}`, status: 'PASS', detail: JSON.stringify(usage) })
     }
     return evidence
   }
