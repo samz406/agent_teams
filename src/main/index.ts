@@ -26,6 +26,7 @@ function registerIpc(): void {
     return runtime.request({ type: 'workspace.add', workspace: { path, ...info } })
   })
   ipcMain.handle('change:create', (_event, input: CreateChangeInput) => runtime.request({ type: 'change.create', input }))
+  ipcMain.handle('change:kick', (_event, changeId: string, reason?: string) => runtime.request({ type: 'change.kick', changeId, reason }))
   ipcMain.handle('agent:create', (_event, input: CreateAgentInput) => runtime.request({ type: 'agent.create', input }))
   ipcMain.handle('agent:update', (_event, input: UpdateAgentInput) => runtime.request({ type: 'agent.update', input }))
   ipcMain.handle('runtime:detect', () => runtime.request({ type: 'runtime.detect' }))

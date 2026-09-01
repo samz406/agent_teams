@@ -5,6 +5,7 @@ const api: DesktopApi = {
   getSnapshot: () => ipcRenderer.invoke('app:snapshot'),
   selectWorkspace: () => ipcRenderer.invoke('workspace:select'),
   createChange: (input: CreateChangeInput) => ipcRenderer.invoke('change:create', input),
+  startChange: (changeId: string, reason?: string) => ipcRenderer.invoke('change:kick', changeId, reason),
   createAgent: (input: CreateAgentInput) => ipcRenderer.invoke('agent:create', input),
   updateAgent: (input: UpdateAgentInput) => ipcRenderer.invoke('agent:update', input),
   sendMessage: (changeId: string, content: string, targetAgentId?: string) => ipcRenderer.invoke('message:send', changeId, content, targetAgentId),

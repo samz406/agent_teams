@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import type { Agent, PermissionSet, Run, RuntimeEvent, RuntimeInfo, Task } from '../shared/contracts'
+import type { Agent, Change, PermissionSet, Run, RuntimeEvent, RuntimeInfo, Task } from '../shared/contracts'
 import type { AppDatabase } from '../main/database'
 import { collectGitEvidence } from '../main/runtime/git'
 import { extractTeamActions } from '../main/runtime/parser'
@@ -13,6 +13,28 @@ import { WorkspaceManager } from './workspace-manager'
 
 type Publish = (event: RuntimeEvent) => void
 interface StartOptions { parentRunId?: string | null; retryReason?: string | null; resumeNative?: boolean }
+interface EnsurePhaseOptions { reason?: string; parentRunId?: string | null }
+
+const activeStatuses = new Set(['QUEUED', 'STARTING', 'RUNNING'])
+const writablePhases = new Set(['development', 'fix', 'refactor'])
+const phaseAgentPreferences: Record<string, string[]> = {
+  reproduce: ['QA Agent', 'Code Agent', 'Leader', 'Architect'],
+  'root-cause': ['Architect', 'Leader', 'Code Agent', 'QA Agent'],
+  fix: ['Code Agent', 'Leader', 'Architect', 'QA Agent'],
+  verify: ['QA Agent', 'Architect', 'Leader', 'Code Agent'],
+  regression: ['QA Agent', 'Code Agent', 'Leader', 'Architect'],
+  review: ['Architect', 'QA Agent', 'Leader', 'Code Agent'],
+  discovery: ['Architect', 'Leader', 'Code Agent', 'QA Agent'],
+  proposal: ['Architect', 'Leader', 'Code Agent', 'QA Agent'],
+  development: ['Code Agent', 'Leader', 'Architect', 'QA Agent'],
+  integration: ['QA Agent', 'Code Agent', 'Leader', 'Architect'],
+  investigation: ['Architect', 'QA Agent', 'Leader', 'Code Agent'],
+  evidence: ['QA Agent', 'Architect', 'Leader', 'Code Agent'],
+  checks: ['QA Agent', 'Code Agent', 'Architect', 'Leader'],
+  recheck: ['QA Agent', 'Code Agent', 'Architect', 'Leader'],
+  triage: ['Architect', 'Leader', 'QA Agent', 'Code Agent'],
+  decision: ['Leader', 'Architect', 'QA Agent', 'Code Agent']
+}
 
 export class TeamRunManager {
   private queue = new RuntimeQueue(3)
@@ -28,6 +50,80 @@ export class TeamRunManager {
   getRuntimes(): RuntimeInfo[] { return this.runtimes }
   queueStats(): ReturnType<RuntimeQueue['stats']> { return this.queue.stats() }
 
+  async ensureCurrentPhase(changeId: string, options: EnsurePhaseOptions = {}): Promise<string | null> {
+    const change = this.db.getChange(changeId)
+    if (!change) throw new Error('任务不存在')
+    if (change.status === 'DONE' || change.status === 'FAILED') return null
+    const phase = WORKFLOWS[change.workflowType][change.currentPhase]
+    if (!phase || phase.id === 'done') {
+      this.db.updateChangeState(change.id, 'DONE', Math.max(0, WORKFLOWS[change.workflowType].length - 1))
+      this.changed()
+      return null
+    }
+
+    if (phase.humanMode === 'IN_LOOP' && !this.db.hasApprovedArtifact(change.id)) {
+      if (change.status !== 'WAITING_HUMAN') {
+        this.db.updateChangeState(change.id, 'WAITING_HUMAN')
+        this.db.addMessage(change.id, 'system', null, 'System', `${phase.name} 是强人工 Gate，Workflow 已暂停，等待批准 Artifact 后继续。`, null)
+        this.changed()
+      }
+      return null
+    }
+
+    const state = this.db.snapshot(this.runtimes)
+    const phaseTasks = this.db.getPhaseTasks(change.id, phase.id)
+    const active = state.runs.find(run => run.changeId === change.id && activeStatuses.has(run.status) && phaseTasks.some(task => task.id === run.taskId))
+    if (active) return active.id
+
+    if (phaseTasks.length && phaseTasks.every(task => task.status === 'ACCEPTED')) {
+      try {
+        this.leader.advance(change)
+        this.changed()
+        return this.ensureCurrentPhase(changeId, { reason: `Continue after ${phase.name}`, parentRunId: options.parentRunId })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.db.updateChangeState(change.id, 'BLOCKED')
+        this.db.addMessage(change.id, 'system', null, 'System', `无法从 ${phase.name} 推进：${message}`, null)
+        this.changed()
+        return null
+      }
+    }
+
+    let task = phaseTasks.find(item => ['ASSIGNED', 'BLOCKED', 'REWORK'].includes(item.status))
+    let agent = task ? this.db.getAgent(task.assignedAgentId) : undefined
+    if (!agent) agent = this.selectPhaseAgent(change, phase.id)
+    if (!agent) {
+      this.db.updateChangeState(change.id, 'BLOCKED')
+      this.db.addMessage(change.id, 'system', null, 'System', `${phase.name} 无可用 Agent。请为当前团队配置至少一个可执行 Runtime。`, null)
+      this.publish({ type: 'runtime.notice', level: 'error', message: `${phase.name} 无可用 Agent` })
+      this.changed()
+      return null
+    }
+
+    const instruction = this.buildPhaseInstruction(change, phase.id, agent, options.reason)
+    if (!task) {
+      task = this.leader.createTask(change, agent, instruction)
+      this.db.addMessage(change.id, 'system', null, 'System', `${agent.name} 已自动接手 ${phase.name}，准备启动真实 ${agent.runtime} Runtime。`, null)
+    } else if (task.status !== 'ASSIGNED') {
+      this.db.updateTask(task.id, 'ASSIGNED', null)
+      this.db.addMessage(change.id, 'system', null, 'System', `${phase.name} 的 Task 已恢复，正在重新启动 ${agent.name}。`, null)
+    }
+    this.db.updateChangeState(change.id, 'RUNNING')
+    this.changed()
+
+    try {
+      return await this.start(change.id, agent, instruction, task, { parentRunId: options.parentRunId ?? null, retryReason: options.reason ?? null })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.db.updateTask(task.id, 'BLOCKED', null)
+      this.db.updateChangeState(change.id, 'BLOCKED')
+      this.db.addMessage(change.id, 'system', null, 'System', `${phase.name} Runtime 启动失败：${message}。Task 已保留，可在任务菜单点击“启动/继续执行”重试。`, null)
+      this.publish({ type: 'runtime.notice', level: 'error', message: `${phase.name} 启动失败：${message}` })
+      this.changed()
+      return null
+    }
+  }
+
   async start(changeId: string, agent: Agent, prompt: string, task: Task, options: StartOptions = {}): Promise<string> {
     const change = this.db.getChange(changeId)
     if (!change || !change.agentIds.includes(agent.id)) throw new Error('Agent 不属于当前 Session Team')
@@ -37,7 +133,7 @@ export class TeamRunManager {
     const workstream = this.db.getWorkstream(changeId, agent.id, binding.workspaceId)
     if (!workspace || !workstream) throw new Error('Workspace 或 Workstream 不存在')
     const phase = WORKFLOWS[change.workflowType][change.currentPhase]
-    const effectivePermissions: PermissionSet = { ...binding.permissions, write: binding.permissions.write && ['development', 'fix', 'refactor'].includes(phase.id) }
+    const effectivePermissions: PermissionSet = { ...binding.permissions, write: binding.permissions.write && writablePhases.has(phase.id) }
     const prepared = await this.workspaces.prepare(change, workspace, { ...binding, permissions: effectivePermissions }, workstream)
     this.db.updateWorkstream(workstream.id, { status: 'ACTIVE', worktreePath: effectivePermissions.write ? prepared.cwd : workstream.worktreePath, branch: prepared.branch, baseCommit: prepared.baseCommit })
     const adapter = this.registry.get(agent.runtime)
@@ -81,14 +177,44 @@ export class TeamRunManager {
     await this.start(run.changeId, agent, `${run.prompt}\n\nHuman instruction: ${reason || 'Continue and correct the previous execution.'}`, task, { parentRunId: run.id, retryReason: reason || action, resumeNative: action === 'resume' && adapter.supportsNativeResume && Boolean(run.sessionId) })
   }
 
+  private selectPhaseAgent(change: Change, phaseId: string): Agent | undefined {
+    const state = this.db.snapshot(this.runtimes)
+    const fixAgents = change.workflowType === 'bug-fix' && phaseId === 'verify' ? new Set(this.db.getPhaseTasks(change.id, 'fix').map(task => task.assignedAgentId)) : new Set<string>()
+    let candidates = state.agents.filter(agent => change.agentIds.includes(agent.id) && !fixAgents.has(agent.id))
+    if (writablePhases.has(phaseId)) {
+      const writable = candidates.filter(agent => Boolean(this.db.getBinding(change.id, agent.id)?.permissions.write))
+      if (writable.length) candidates = writable
+    }
+    const available = candidates.filter(agent => Boolean(agent.command) || this.runtimes.some(runtime => runtime.type === agent.runtime && runtime.available))
+    if (available.length) candidates = available
+    const preferences = phaseAgentPreferences[phaseId] ?? ['Leader', 'Code Agent', 'Architect', 'QA Agent']
+    candidates.sort((a, b) => rankAgent(a.name, preferences) - rankAgent(b.name, preferences))
+    return candidates[0]
+  }
+
+  private buildPhaseInstruction(change: Change, phaseId: string, agent: Agent, reason?: string): string {
+    const phase = WORKFLOWS[change.workflowType][change.currentPhase]
+    const phaseGuidance: Record<string, string> = {
+      reproduce: '稳定复现缺陷。优先找到最小复现路径，记录 Expected / Actual，并执行真实命令或测试证明问题存在。此阶段不要修改业务代码。',
+      'root-cause': '基于已经得到的复现证据定位根因，给出从现象到代码机制的因果链，并指出将要修改的最小范围。',
+      fix: '实施最小范围修复。必须产生真实 Diff，并运行与缺陷直接相关的测试；不要顺手重构无关代码。',
+      verify: '作为独立验证者，不依赖实现者结论，重新执行原复现 Case 和相关测试，证明缺陷已消失。不要修改实现代码。',
+      regression: '运行受影响范围的回归测试，关注修复引入的二阶影响，并给出明确 PASS/FAIL 证据。',
+      review: '审查最终 Diff、测试与风险，检查越界修改、遗漏 Case 和潜在回归。Review 不要求为了形式重复执行全部测试，但结论必须引用已有证据。'
+    }
+    const state = this.db.snapshot(this.runtimes)
+    const priorTasks = state.tasks.filter(task => task.changeId === change.id).map(task => `- ${task.phaseId}: ${task.title} = ${task.status}`).join('\n') || '- 暂无前序 Task'
+    return `Agent Teams 自动调度任务。\n\nChange: #${change.number} ${change.title}\nWorkflow: ${change.workflowType}\nCurrent phase: ${phase.name}\nPhase goal: ${phase.goal}\nDeliverable: ${phase.deliverable}\nExit criteria:\n${phase.exitCriteria.map(item => `- ${item}`).join('\n')}\nAssigned agent: ${agent.name}\n\nOriginal requirement:\n${change.description}\n\nPhase guidance:\n${phaseGuidance[phaseId] ?? '完成当前阶段目标，并用真实 Workspace 证据支撑结论。'}\n\nPersisted task history:\n${priorTasks}\n${reason ? `\nScheduler reason:\n${reason}\n` : ''}\n直接开始执行，不要等待用户再次确认。所有“完成/通过”判断必须基于真实命令、测试、Diff 或 Runtime Evidence。需要当前团队其他 Agent 协作时可使用 team-actions。`
+  }
+
   private async execute(run: Run, agent: Agent, permissions: PermissionSet, nativeSessionId: string | null): Promise<void> {
-    this.db.updateRun(run.id, { status: 'STARTING', startedAt: new Date().toISOString() }); this.leader.onRunStarted(run.taskId, run.id); this.publish({ type: 'run.status', runId: run.id, status: 'STARTING' })
+    this.db.updateRun(run.id, { status: 'STARTING', startedAt: new Date().toISOString() }); this.leader.onRunStarted(run.taskId, run.id); this.publish({ type: 'run.status', runId: run.id, status: 'STARTING' }); this.changed()
     const adapter = this.registry.get(run.runtime)
     try {
       const launchInput = { executable: run.executable, prompt: buildPrompt(agent, run.prompt), cwd: run.workspacePath, permissions, nativeSessionId, argsTemplate: agent.argsTemplate }
       const launch = this.resumeRuns.delete(run.id) ? await adapter.resume(launchInput) : await adapter.start(launchInput)
       this.processes.set(run.id, { child: launch.child, agent })
-      this.db.updateRun(run.id, { status: 'RUNNING' }); this.db.addEvidence(run.id, { type: 'COMMAND', title: launch.redactedCommand, status: 'UNVERIFIED', detail: `cwd: ${run.workspacePath}` }); this.publish({ type: 'run.status', runId: run.id, status: 'RUNNING' })
+      this.db.updateRun(run.id, { status: 'RUNNING' }); this.db.addEvidence(run.id, { type: 'COMMAND', title: launch.redactedCommand, status: 'UNVERIFIED', detail: `cwd: ${run.workspacePath}` }); this.publish({ type: 'run.status', runId: run.id, status: 'RUNNING' }); this.changed()
       let stdout = ''; let stderr = ''
       this.buffers.set(run.id, { stdout, stderr })
       launch.child.stdout.on('data', chunk => { const value = String(chunk); stdout += value; this.buffers.set(run.id, { stdout, stderr }); this.publish({ type: 'run.activity', runId: run.id, stream: 'stdout', chunk: value }) })
@@ -109,14 +235,19 @@ export class TeamRunManager {
       if (/proposal|contract|report|方案|报告/i.test(parsed.finalResponse)) this.db.createArtifact(run.changeId, 'RUN_DELIVERABLE', `${agent.name} Deliverable`, parsed.finalResponse)
       const completed = this.db.getRun(run.id)!
       await this.delegateActions(completed, agent, parsed.finalResponse)
-      this.leader.onRunFinished(this.db.getRun(run.id)!)
+      const beforePhase = this.db.getChange(run.changeId)?.currentPhase
+      const result = this.leader.onRunFinished(this.db.getRun(run.id)!)
+      const after = this.db.getChange(run.changeId)
       this.publish({ type: 'run.status', runId: run.id, status }); this.changed()
       this.buffers.delete(run.id)
+      if (result.accepted && after && after.status === 'RUNNING' && beforePhase !== undefined && after.currentPhase !== beforePhase) {
+        await this.ensureCurrentPhase(after.id, { reason: `Auto-continue after ${WORKFLOWS[after.workflowType][beforePhase]?.name ?? 'previous phase'}`, parentRunId: run.id })
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.processes.delete(run.id); this.buffers.delete(run.id); this.db.updateRun(run.id, { status: 'FAILED', endedAt: new Date().toISOString(), stderr: message, finalResponse: message }); this.db.addEvidence(run.id, { type: 'RUNTIME', title: 'Runtime failure', status: 'FAIL', detail: message })
       if (run.taskId) this.leader.onRunFinished(this.db.getRun(run.id)!)
-      this.publish({ type: 'runtime.notice', level: 'error', message }); this.changed()
+      this.publish({ type: 'run.status', runId: run.id, status: 'FAILED' }); this.publish({ type: 'runtime.notice', level: 'error', message }); this.changed()
     }
   }
 
@@ -137,6 +268,11 @@ export class TeamRunManager {
     }))
     this.processes.clear(); this.changed()
   }
+}
+
+function rankAgent(name: string, preferences: string[]): number {
+  const index = preferences.findIndex(value => value.toLowerCase() === name.toLowerCase())
+  return index === -1 ? preferences.length + 1 : index
 }
 
 function buildPrompt(agent: Agent, prompt: string): string {

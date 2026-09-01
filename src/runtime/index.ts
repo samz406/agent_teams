@@ -46,30 +46,20 @@ async function dispatch(request: RuntimeRequest): Promise<unknown> {
       if (request.input.agentBindings.length !== request.input.agentIds.length) throw new Error('每个 Agent 必须绑定一个 Workspace')
       for (const binding of request.input.agentBindings) if (!request.input.agentIds.includes(binding.agentId) || !request.input.workspaceIds.includes(binding.workspaceId)) throw new Error('Agent-Workspace Binding 越过当前 Change 范围')
       const value = db.createChange(request.input)
-      const state = db.snapshot(runManager.getRuntimes())
-      const initialAgent = state.agents.find(agent => agent.name === 'Leader' && value.agentIds.includes(agent.id)) ?? state.agents.find(agent => value.agentIds.includes(agent.id))
-      if (!initialAgent) throw new Error('任务已创建，但没有可执行的初始 Agent')
-      const phase = WORKFLOWS[value.workflowType][value.currentPhase]
-      const prompt = `任务已创建，请立即开始真实执行，不要等待用户再次发消息。\n\n任务：#${value.number} ${value.title}\n当前阶段：${phase.name}\n阶段目标：${phase.goal}\n任务描述：${value.description}\n\n请先读取当前 Workspace 的真实代码/文件，形成当前阶段需要的结论和证据；需要其他 Agent 参与时使用 team-actions 委派。不要把“应用内任务列表”误认为 Workspace 中的文件或 CLI 自带任务列表。`
-      const task = leader.createTask(value, initialAgent, value.description)
-      db.addMessage(value.id, 'system', null, 'System', `${initialAgent.name} 已自动接手 ${phase.name}，正在启动真实 CLI Runtime。`, null)
       changed()
-      try {
-        await runManager.start(value.id, initialAgent, buildExecutionContext(value, db.snapshot(runManager.getRuntimes()), initialAgent, prompt), task)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        db.updateTask(task.id, 'BLOCKED', null)
-        db.updateChangeState(value.id, 'BLOCKED')
-        db.addMessage(value.id, 'system', null, 'System', `初始 Runtime 启动失败：${message}。任务和 Task 已保留，可修复 Runtime 配置后继续。`, null)
-        publish({ type: 'runtime.notice', level: 'error', message: `任务已创建，但 Runtime 启动失败：${message}` })
-        changed()
-      }
+      await runManager.ensureCurrentPhase(value.id, { reason: 'Task created: start the first workflow phase immediately' })
       return db.getChange(value.id) ?? value
     }
+    case 'change.kick': return runManager.ensureCurrentPhase(request.changeId, { reason: request.reason || 'Manual start / continue requested by user' })
     case 'message.send': return sendMessage(request.changeId, request.content, request.targetAgentId)
     case 'run.control': return runManager.control(request.runId, request.action, request.reason)
     case 'artifact.approve': db.approveArtifact(request.artifactId, request.approve, request.feedback); changed(); return null
-    case 'workflow.advance': { const change = db.getChange(request.changeId); if (!change) throw new Error('任务不存在'); leader.advance(change); changed(); return null }
+    case 'workflow.advance': {
+      const change = db.getChange(request.changeId); if (!change) throw new Error('任务不存在')
+      leader.advance(change); changed()
+      await runManager.ensureCurrentPhase(change.id, { reason: 'Workflow advanced manually' })
+      return null
+    }
     case 'issue.update': db.updateIssue(request.issueId, request.status, request.resolution); changed(); return null
   }
 }

@@ -264,6 +264,7 @@ export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>
   selectWorkspace(): Promise<Workspace | null>
   createChange(input: CreateChangeInput): Promise<Change>
+  startChange(changeId: string, reason?: string): Promise<void>
   createAgent(input: CreateAgentInput): Promise<Agent>
   updateAgent(input: UpdateAgentInput): Promise<Agent>
   sendMessage(changeId: string, content: string, targetAgentId?: string): Promise<void>
@@ -279,6 +280,7 @@ export type RuntimeRequest =
   | { type: 'snapshot.get' }
   | { type: 'workspace.add'; workspace: Omit<Workspace, 'id' | 'createdAt'> }
   | { type: 'change.create'; input: CreateChangeInput }
+  | { type: 'change.kick'; changeId: string; reason?: string }
   | { type: 'agent.create'; input: CreateAgentInput }
   | { type: 'agent.update'; input: UpdateAgentInput }
   | { type: 'runtime.detect' }
