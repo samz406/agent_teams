@@ -37,6 +37,8 @@ interface Pricing {
   version: string
 }
 
+type PartialUsage = Omit<TokenUsage, 'totalTokens'> & { totalTokens?: number }
+
 // USD per 1M tokens. These are intentionally versioned so historical runs keep the
 // estimate that was current when their Usage Evidence was recorded.
 // OpenAI: ChatGPT Work / Codex token rate card, effective 2026-07-30.
@@ -55,10 +57,11 @@ const PRICING: Pricing[] = [
 ]
 
 const emptyUsage = (): TokenUsage => ({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheCreationInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 })
+const emptyPartialUsage = (): PartialUsage => ({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheCreationInputTokens: 0, reasoningOutputTokens: 0 })
 
 export function extractUsageSummary(output: string): UsageSummary | null {
   if (!output.trim()) return null
-  const candidates: Array<{ usage: Omit<TokenUsage, 'totalTokens'> & { totalTokens?: number }; model: string | null }> = []
+  const candidates: Array<{ usage: PartialUsage; model: string | null }> = []
   const models: string[] = []
   const costs: number[] = []
   let provider: UsageSummary['provider'] = 'unknown'
@@ -88,21 +91,24 @@ export function extractUsageSummary(output: string): UsageSummary | null {
         const modelUsage = asRecord(record.modelUsage) ?? asRecord(record.model_usage)
         if (modelUsage) {
           const entries = Object.entries(modelUsage).filter(([, item]) => asRecord(item))
-          const aggregate = emptyUsage()
+          const aggregate = emptyPartialUsage()
           let aggregateCost = 0
+          let validEntries = 0
           for (const [modelName, item] of entries) {
-            const normalized = normalizeUsage(asRecord(item)!)
+            const itemRecord = asRecord(item)!
+            const normalized = normalizeUsage(itemRecord)
             if (!hasUsage(normalized)) continue
+            validEntries += 1
             models.push(modelName)
             aggregate.inputTokens += normalized.inputTokens
             aggregate.outputTokens += normalized.outputTokens
             aggregate.cachedInputTokens += normalized.cachedInputTokens
             aggregate.cacheCreationInputTokens += normalized.cacheCreationInputTokens
             aggregate.reasoningOutputTokens += normalized.reasoningOutputTokens
-            const itemCost = firstNumber(asRecord(item)!.costUSD, asRecord(item)!.cost_usd)
+            const itemCost = firstNumber(itemRecord.costUSD, itemRecord.cost_usd)
             if (itemCost !== null) aggregateCost += itemCost
           }
-          if (aggregate.inputTokens || aggregate.outputTokens || aggregate.cachedInputTokens || aggregate.cacheCreationInputTokens) candidates.push({ usage: aggregate, model: entries.length === 1 ? entries[0][0] : null })
+          if (validEntries) candidates.push({ usage: aggregate, model: validEntries === 1 ? entries.find(([, item]) => hasUsage(normalizeUsage(asRecord(item)!)))?.[0] ?? null : 'multiple-models' })
           if (aggregateCost > 0) costs.push(aggregateCost)
         }
       })
@@ -167,7 +173,8 @@ export function formatTokens(value: number): string {
 
 export function formatCost(aggregate: Pick<UsageAggregate, 'costUsd' | 'pricedRuns' | 'usageRuns'>): string {
   if (!aggregate.usageRuns || !aggregate.pricedRuns) return '成本暂无'
-  return `~$${aggregate.costUsd < 0.01 ? aggregate.costUsd.toFixed(4) : aggregate.costUsd.toFixed(2)}`
+  const amount = aggregate.costUsd < 0.01 ? aggregate.costUsd.toFixed(4) : aggregate.costUsd.toFixed(2)
+  return `~$${amount}${aggregate.pricedRuns < aggregate.usageRuns ? '+' : ''}`
 }
 
 export function formatDuration(run: Pick<Run, 'startedAt' | 'endedAt'>): string | null {
@@ -196,7 +203,7 @@ function estimateCost(model: string | null, usage: TokenUsage): { costUsd: numbe
   return { costUsd: roundCost(cost), version: pricing.version, provider: pricing.provider }
 }
 
-function normalizeUsage(record: Record<string, unknown>): Omit<TokenUsage, 'totalTokens'> & { totalTokens?: number } {
+function normalizeUsage(record: Record<string, unknown>): PartialUsage {
   return {
     inputTokens: firstNumber(record.input_tokens, record.inputTokens, record.prompt_tokens, record.promptTokens) ?? 0,
     outputTokens: firstNumber(record.output_tokens, record.outputTokens, record.completion_tokens, record.completionTokens) ?? 0,
@@ -207,7 +214,7 @@ function normalizeUsage(record: Record<string, unknown>): Omit<TokenUsage, 'tota
   }
 }
 
-function finalizeUsage(raw: Omit<TokenUsage, 'totalTokens'> & { totalTokens?: number }, provider: UsageSummary['provider']): TokenUsage {
+function finalizeUsage(raw: PartialUsage, provider: UsageSummary['provider']): TokenUsage {
   const totalTokens = raw.totalTokens ?? (provider === 'anthropic'
     ? raw.inputTokens + raw.cachedInputTokens + raw.cacheCreationInputTokens + raw.outputTokens
     : raw.inputTokens + raw.outputTokens + raw.cacheCreationInputTokens)
@@ -244,8 +251,8 @@ function looksLikeUsageRecord(record: Record<string, unknown>): boolean {
   return ['input_tokens','inputTokens','output_tokens','outputTokens','prompt_tokens','completion_tokens'].some(key => typeof record[key] === 'number')
 }
 
-function hasUsage(usage: Omit<TokenUsage, 'totalTokens'> & { totalTokens?: number }): boolean { return rawTokenScore(usage) > 0 }
-function rawTokenScore(usage: Omit<TokenUsage, 'totalTokens'> & { totalTokens?: number }): number { return usage.totalTokens ?? usage.inputTokens + usage.outputTokens + usage.cachedInputTokens + usage.cacheCreationInputTokens }
+function hasUsage(usage: PartialUsage): boolean { return rawTokenScore(usage) > 0 }
+function rawTokenScore(usage: PartialUsage): number { return usage.totalTokens ?? usage.inputTokens + usage.outputTokens + usage.cachedInputTokens + usage.cacheCreationInputTokens }
 function asRecord(value: unknown): Record<string, unknown> | null { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null }
 function firstString(...values: unknown[]): string | null { return values.find(value => typeof value === 'string' && value.length > 0) as string | undefined ?? null }
 function firstNumber(...values: unknown[]): number | null { const value = values.find(item => typeof item === 'number' && Number.isFinite(item)); return typeof value === 'number' ? value : null }
