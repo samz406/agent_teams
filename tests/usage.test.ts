@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateRunUsage, extractUsageSummary, parseUsageEvidence, usageForRun } from '../src/shared/usage'
+import { aggregateRunUsage, extractUsageSummary, formatCost, parseUsageEvidence, usageForRun } from '../src/shared/usage'
 import type { Evidence, Run } from '../src/shared/contracts'
 
 describe('runtime usage metering', () => {
@@ -18,7 +18,24 @@ describe('runtime usage metering', () => {
     expect(result?.costUsd).toBe(0.0421)
   })
 
-  it('extracts Codex turn usage and estimates current public rate-card cost', () => {
+  it('aggregates Claude modelUsage instead of silently choosing one model', () => {
+    const output = JSON.stringify({
+      type: 'result',
+      modelUsage: {
+        'claude-sonnet-5': { inputTokens: 1500, cacheReadInputTokens: 400, outputTokens: 200, costUSD: 0.01 },
+        'claude-opus-5': { inputTokens: 300, outputTokens: 100, costUSD: 0.005 }
+      },
+      total_cost_usd: 0.015
+    })
+    const result = extractUsageSummary(output)
+    expect(result?.provider).toBe('anthropic')
+    expect(result?.model).toBe('multiple-models')
+    expect(result?.usage).toMatchObject({ inputTokens: 1800, cachedInputTokens: 400, outputTokens: 300, totalTokens: 2500 })
+    expect(result?.costType).toBe('REPORTED')
+    expect(result?.costUsd).toBe(0.015)
+  })
+
+  it('extracts Codex turn usage and estimates current public rate-card cost when model is known', () => {
     const output = [
       JSON.stringify({ type: 'thread.started', thread_id: 'abc', model: 'gpt-5.6-terra' }),
       JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10000, cached_input_tokens: 4000, output_tokens: 2000 } })
@@ -32,6 +49,16 @@ describe('runtime usage metering', () => {
     expect(result?.costUsd).toBeCloseTo(0.0368, 6)
   })
 
+  it('keeps real Codex token usage when CLI omits model and does not invent a dollar cost', () => {
+    const result = extractUsageSummary(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 9000, cached_input_tokens: 2500, output_tokens: 1000, reasoning_output_tokens: 300 } }))
+    expect(result?.provider).toBe('openai')
+    expect(result?.model).toBeNull()
+    expect(result?.usage.totalTokens).toBe(10000)
+    expect(result?.usage.reasoningOutputTokens).toBe(300)
+    expect(result?.costType).toBe('UNAVAILABLE')
+    expect(result?.costUsd).toBeNull()
+  })
+
   it('persists usage as evidence and aggregates multiple runs without inventing missing cost', () => {
     const first = extractUsageSummary(JSON.stringify({ type: 'turn.completed', model: 'gpt-5.6-luna', usage: { input_tokens: 5000, cached_input_tokens: 1000, output_tokens: 1000 } }))!
     const second = extractUsageSummary(JSON.stringify({ type: 'result', model: 'claude-sonnet-5', usage: { input_tokens: 2000, output_tokens: 500 }, total_cost_usd: 0.02 }))!
@@ -43,6 +70,10 @@ describe('runtime usage metering', () => {
     expect(aggregate.costUsd).toBeGreaterThan(0.02)
     expect(usageForRun(runs[0])?.model).toBe('gpt-5.6-luna')
     expect(parseUsageEvidence(runs[1].evidence[0].detail)?.costType).toBe('REPORTED')
+  })
+
+  it('marks a partially priced task cost as incomplete', () => {
+    expect(formatCost({ costUsd: 0.42, pricedRuns: 2, usageRuns: 3 })).toBe('~$0.42+')
   })
 })
 
