@@ -1,13 +1,12 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import type { Agent, Conversation, ConversationDeliverable, ConversationMemory, ConversationParticipant, ConversationTurn, RuntimeEvent, RuntimeInfo } from '../shared/contracts'
+import type { Agent, Conversation, ConversationDeliverable, ConversationMemory, ConversationParticipant, ConversationTurn, RuntimeInfo } from '../shared/contracts'
 import type { AppDatabase } from '../main/database'
 import { extractTokenUsage } from '../main/runtime/parser'
 import { AdapterRegistry, type RuntimeAdapter } from './adapters'
 import { RuntimeQueue } from './runtime-queue'
 
-type Publish = (event: RuntimeEvent) => void
 type ChatResult = { content: string; nativeSessionId: string | null; inputTokens: number; outputTokens: number }
 
 export interface ConversationExecutor {
@@ -21,7 +20,7 @@ export class AdapterConversationExecutor implements ConversationExecutor {
   private queued = new Map<string, string>()
   private cancelled = new Set<string>()
 
-  constructor(private registry: AdapterRegistry, private runtimes: () => RuntimeInfo[], private queue: RuntimeQueue, private dataDirectory: string, private publish: Publish) {}
+  constructor(private registry: AdapterRegistry, private runtimes: () => RuntimeInfo[], private queue: RuntimeQueue, private dataDirectory: string) {}
 
   async execute(conversation: Conversation, participant: ConversationParticipant, agent: Agent, turnId: string, prompt: string): Promise<ChatResult> {
     const adapter = this.registry.get(agent.runtime)
@@ -41,7 +40,7 @@ export class AdapterConversationExecutor implements ConversationExecutor {
         const launch = participant.nativeSessionId && adapter.supportsNativeResume ? await adapter.resume(input) : await adapter.start(input)
         this.active.set(conversation.id, { queueId, child: launch.child, adapter })
         let stdout = ''; let stderr = ''
-        launch.child.stdout.on('data', chunk => { const value = String(chunk); stdout += value; this.publish({ type: 'conversation.activity', conversationId: conversation.id, turnId, chunk: value }) })
+        launch.child.stdout.on('data', chunk => { stdout += String(chunk) })
         launch.child.stderr.on('data', chunk => { stderr += String(chunk) })
         const code = await new Promise<number | null>((resolve, reject) => { launch.child.once('error', reject); launch.child.once('close', resolve) })
         if (this.cancelled.has(conversation.id)) return

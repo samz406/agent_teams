@@ -5,7 +5,6 @@ interface AppState {
   snapshot: AppSnapshot
   ready: boolean
   live: Record<string, string>
-  conversationLive: Record<string, string>
   notice: { type: 'success' | 'error'; text: string } | null
   load(): Promise<void>
   apply(event: RuntimeEvent): void
@@ -18,13 +17,11 @@ export const useAppStore = create<AppState>((set) => ({
   snapshot: empty,
   ready: false,
   live: {},
-  conversationLive: {},
   notice: null,
   load: async () => set({ snapshot: await window.moxt.getSnapshot(), ready: true }),
   apply: event => {
     if (event.type === 'snapshot.changed') set({ snapshot: event.snapshot })
     if (event.type === 'run.activity') set(state => ({ live: { ...state.live, [event.runId]: (state.live[event.runId] || '') + event.chunk } }))
-    if (event.type === 'conversation.activity') set(state => ({ conversationLive: { ...state.conversationLive, [event.turnId]: (state.conversationLive[event.turnId] || '') + event.chunk } }))
     if (event.type === 'runtime.notice') set({ notice: { type: event.level === 'error' ? 'error' : 'success', text: event.message } })
   },
   notify: (type, text) => { set({ notice: { type, text } }); window.setTimeout(() => set({ notice: null }), 3500) }

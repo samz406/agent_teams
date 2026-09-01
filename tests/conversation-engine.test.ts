@@ -60,6 +60,14 @@ describe('conversation engine', () => {
     const db = new AppDatabase(join(root, 'db.sqlite')); const agents = db.snapshot([]).agents.slice(0, 2)
     expect(() => db.createConversation({ title: 'x', topic: 'y', background: '', mode: 'debate', maxRounds: 2, maxMessages: 10, maxTokens: 10000, participants: agents.map(agent => ({ agentId: agent.id, roleName: agent.name, rolePrompt: '', isLeader: false })) })).toThrow('必须且只能有一个 Leader')
   })
+
+  it('preserves the expanded 20-round and 200-message defaults', () => {
+    const root = mkdtempSync(join(tmpdir(), 'moxt-conversation-budget-')); roots.push(root)
+    const db = new AppDatabase(join(root, 'db.sqlite')); const agents = db.snapshot([]).agents.slice(0, 2)
+    const conversation = db.createConversation({ title: 'x', topic: 'y', background: '', mode: 'roundtable', maxRounds: 20, maxMessages: 200, maxTokens: 1_000_000, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: index ? '实践顾问' : '讨论主持人', rolePrompt: '', isLeader: index === 0 })) })
+    expect(conversation.maxRounds).toBe(20)
+    expect(conversation.maxMessages).toBe(200)
+  })
 })
 
 async function waitFor(predicate: () => boolean, timeout = 2000): Promise<void> {

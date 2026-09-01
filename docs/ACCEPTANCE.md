@@ -19,7 +19,7 @@
 | Git Worktree 隔离 | 已实现 | 写 Binding 强制 Git Workspace，并按 Change/Agent 创建持久 Branch/Worktree；越界路径与非 Git 写入均拒绝 |
 | 独立 QA 强约束 | 已实现 | Bug Fix Verify 阶段在验收和推进两层拒绝实现 Agent 作为最终 Verifier |
 | 发布 Go/No-Go 阻塞规则 | 已实现 | 未解决 Blocking Issue 在领域层阻止任何阶段推进；测试/Runtime FAIL 不能满足 Evidence Gate |
-| 多 Agent 主题讨论 | 已实现 | Conversation/Participant/Round/Turn/Memory/Deliverable 独立模型；四种协议、共享上下文、Leader、轮次/消息/Token 限制、暂停恢复、定向追问、Markdown 导出与转任务 |
+| 多 Agent 多人聊天 | 已实现 | Conversation/Participant/Round/Turn/Memory/Deliverable 独立模型；四种模式角色模板、共享上下文、Leader、轮次/消息安全预算、暂停恢复、@角色定向追问、Markdown 记忆与导出、转正式任务 |
 | 跨平台安装包 | 构建配置已完成 | macOS arm64/x64、Windows x64、Linux x64 需分别在目标 Runner 重建 Native Module 并签名验收 |
 
 ## 已自动验证

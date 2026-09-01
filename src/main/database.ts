@@ -389,7 +389,7 @@ export class AppDatabase {
     if (new Set(input.participants.map(item => item.agentId)).size !== input.participants.length) throw new Error('同一个 Agent 不能重复加入讨论')
     const number = ((this.db.prepare('SELECT MAX(number) AS n FROM t_conversation').get() as { n: number | null }).n ?? 0) + 1
     const time = now()
-    const value: Conversation = { id: randomUUID(), number, title: input.title.trim(), topic: input.topic.trim(), background: input.background.trim(), mode: input.mode, status: 'DRAFT', currentRound: 0, maxRounds: clamp(input.maxRounds, 1, 10), maxMessages: clamp(input.maxMessages, input.participants.length, 100), maxTokens: clamp(input.maxTokens, 1000, 1_000_000), messageCount: 0, tokenUsed: 0, createdAt: time, updatedAt: time }
+    const value: Conversation = { id: randomUUID(), number, title: input.title.trim(), topic: input.topic.trim(), background: input.background.trim(), mode: input.mode, status: 'DRAFT', currentRound: 0, maxRounds: clamp(input.maxRounds, 1, 50), maxMessages: clamp(input.maxMessages, input.participants.length, 1000), maxTokens: clamp(input.maxTokens, 1000, 1_000_000), messageCount: 0, tokenUsed: 0, createdAt: time, updatedAt: time }
     const tx = this.db.transaction(() => {
       this.db.prepare(`INSERT INTO t_conversation VALUES (@id,@number,@title,@topic,@background,@mode,@status,@currentRound,@maxRounds,@maxMessages,@maxTokens,@messageCount,@tokenUsed,@createdAt,@updatedAt)`).run(value)
       input.participants.forEach((participant, index) => {

@@ -27,7 +27,7 @@ let conversationEngine: ConversationEngine
 const changed = (): void => publish({ type: 'snapshot.changed', snapshot: db.snapshot(runManager?.getRuntimes() ?? []) })
 const leader = new LeaderEngine(db, changed)
 runManager = new TeamRunManager(db, registry, new WorkspaceManager(dataDirectory), leader, publish, changed, runtimeQueue)
-conversationEngine = new ConversationEngine(db, new AdapterConversationExecutor(registry, () => runManager.getRuntimes(), runtimeQueue, dataDirectory, publish), changed)
+conversationEngine = new ConversationEngine(db, new AdapterConversationExecutor(registry, () => runManager.getRuntimes(), runtimeQueue, dataDirectory), changed)
 const initialized = registry.detect().then(runtimes => { runManager.setRuntimes(runtimes); changed() })
 
 process.on('SIGTERM', () => { void Promise.all([runManager.shutdown(), conversationEngine.shutdown()]).finally(() => process.exit(0)) })
