@@ -17,4 +17,23 @@ describe('real runtime output parser', () => {
     expect(actions).toEqual([{ agent: 'QA Agent', prompt: 'Run the original reproduction case' }])
     expect(extractTeamActions('```team-actions\nnot-json\n```')).toEqual([])
   })
+
+  it('accepts generic json delegation, normalizes role aliases, and merges duplicate targets', () => {
+    const actions = extractTeamActions(`\`\`\`json
+[
+  {"agent":"Backend","prompt":"Implement backend endpoints"},
+  {"agent":"Frontend","prompt":"Implement frontend adapter"},
+  {"agent":"Architect","prompt":"Write integration notes"}
+]
+\`\`\``)
+    expect(actions).toHaveLength(2)
+    expect(actions[0].agent).toBe('Code Agent')
+    expect(actions[0].prompt).toContain('Implement backend endpoints')
+    expect(actions[0].prompt).toContain('Implement frontend adapter')
+    expect(actions[1]).toEqual({ agent: 'Architect', prompt: 'Write integration notes' })
+  })
+
+  it('does not interpret unrelated json arrays as delegation', () => {
+    expect(extractTeamActions('```json\n[{"name":"asset","path":"a.json"}]\n```')).toEqual([])
+  })
 })
