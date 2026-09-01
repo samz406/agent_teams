@@ -1,5 +1,6 @@
 import type { Agent, Change, Evidence, Run, Task, WorkflowPhase } from '../shared/contracts'
 import type { AppDatabase } from '../main/database'
+import { extractTeamActions } from '../main/runtime/parser'
 import { WORKFLOWS } from '../shared/workflows'
 
 const codingPhases = new Set(['development', 'fix', 'refactor'])
@@ -12,8 +13,13 @@ export class LeaderEngine {
     const phase = WORKFLOWS[change.workflowType][change.currentPhase]
     const workstream = this.db.getWorkstream(change.id, agent.id)
     const requiredEvidence: Evidence['type'][] = ['RUNTIME']
-    if (codingPhases.has(phase.id)) requiredEvidence.push('DIFF', 'TEST')
-    if (verificationPhases.has(phase.id)) requiredEvidence.push('TEST')
+    if (codingPhases.has(phase.id)) {
+      const role = agent.name.toLowerCase()
+      if (role.includes('architect')) requiredEvidence.push('DIFF')
+      else if (role.includes('qa') || role.includes('test')) requiredEvidence.push('TEST')
+      else requiredEvidence.push('DIFF', 'TEST')
+    }
+    if (verificationPhases.has(phase.id) && !requiredEvidence.includes('TEST')) requiredEvidence.push('TEST')
     const task = this.db.createTask({ changeId: change.id, workstreamId: workstream?.id ?? null, phaseId: phase.id, title: `${phase.name} · ${agent.name}`, description, assignedAgentId: agent.id, verifierAgentId: phase.id === 'verify' ? agent.id : null, status: 'ASSIGNED', requiredEvidence, currentRunId: null, parentTaskId })
     this.changed(); return task
   }
@@ -39,7 +45,7 @@ export class LeaderEngine {
     this.db.updateTask(task.id, 'ACCEPTED', run.id)
     this.db.resolveTaskIssues(task.id, `Run ${run.id} 重新验收通过`)
     this.db.createHandoff({ changeId: change.id, fromTaskId: task.id, fromAgentId: task.assignedAgentId, toTaskId: null, toAgentId: null, deliverable: run.finalResponse ?? 'Run completed', evidenceIds: run.evidence.map(item => item.id) })
-    this.db.addMessage(change.id, 'leader', null, 'Leader', `已验收 ${task.title}。Run、Diff、测试和 Artifact 已按当前阶段规则检查。`, run.id)
+    this.db.addMessage(change.id, 'leader', null, 'Leader', `已验收 ${task.title}。当前 Task 的 Evidence 已按职责与阶段规则检查。`, run.id)
     this.reconcileChange(change)
     this.changed(); return { accepted: true, reason: 'Evidence 满足当前阶段要求' }
   }
@@ -67,7 +73,11 @@ export class LeaderEngine {
 
   private verifyTask(change: Change, phase: Omit<WorkflowPhase, 'status'>, task: Task, run: Run): string | null {
     if (run.status !== 'COMPLETED' || run.exitCode !== 0) return `Runtime 未成功结束（${run.status}, exit=${run.exitCode ?? 'null'}）`
-    for (const type of task.requiredEvidence) {
+    const assignedAgent = this.db.getAgent(task.assignedAgentId)
+    const delegatedChildren = this.db.getPhaseTasks(change.id, phase.id).filter(item => item.parentTaskId === task.id)
+    const isLeaderCoordination = assignedAgent?.name.toLowerCase() === 'leader' && delegatedChildren.length > 0 && extractTeamActions(run.finalResponse ?? '').length > 0
+    const requiredEvidence = isLeaderCoordination ? task.requiredEvidence.filter(type => type === 'RUNTIME') : task.requiredEvidence
+    for (const type of requiredEvidence) {
       const matches = run.evidence.filter(item => item.type === type)
       if (!matches.length) return `缺少 ${type} Evidence`
       if ((type === 'RUNTIME' || type === 'TEST') && !matches.some(item => item.status === 'PASS')) return `${type} Evidence 没有 PASS 结果`
