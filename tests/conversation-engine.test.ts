@@ -13,16 +13,16 @@ class FakeExecutor implements ConversationExecutor {
   calls: Array<{ participantId: string; prompt: string }> = []
   async execute(_conversation: Conversation, participant: ConversationParticipant, _agent: Agent, _turnId: string, prompt: string) {
     this.calls.push({ participantId: participant.id, prompt })
-    return { content: `${participant.roleName}：我同意先确认目标，但是需要关注执行风险？`, nativeSessionId: `session-${participant.id}`, inputTokens: 10, outputTokens: 20 }
+    return { content: `${participant.roleName}：我同意先确认目标，但是需要关注执行风险？`, nativeSessionId: `session-${participant.id}`, inputTokens: 10, outputTokens: 20, cachedInputTokens: 5, cacheCreationInputTokens: 2, totalTokens: 37, costUsd: 0.001, model: 'test-model' }
   }
   async cancel(): Promise<void> {}
   async shutdown(): Promise<void> {}
 }
 
-function setup() {
+function setup(maxRounds = 1) {
   const root = mkdtempSync(join(tmpdir(), 'moxt-conversation-')); roots.push(root)
   const db = new AppDatabase(join(root, 'db.sqlite')); const agents = db.snapshot([]).agents.slice(0, 2)
-  const conversation = db.createConversation({ title: '管理能力提升', topic: '如何提升管理水平', background: '技术负责人，希望从执行走向管理', mode: 'roundtable', maxRounds: 1, maxMessages: 6, maxTokens: 10000, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: index ? '组织教练' : '主持人', rolePrompt: index ? '关注人的动机与反馈' : '收敛共识和分歧', isLeader: index === 0 })) })
+  const conversation = db.createConversation({ title: '管理能力提升', topic: '如何提升管理水平', background: '技术负责人，希望从执行走向管理', mode: 'roundtable', maxRounds, maxMessages: 20, maxTokens: 10000, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: index ? '组织教练' : '主持人', rolePrompt: index ? '关注人的动机与反馈' : '收敛共识和分歧', isLeader: index === 0 })) })
   const executor = new FakeExecutor(); const engine = new ConversationEngine(db, executor, () => undefined)
   return { db, agents, conversation, executor, engine }
 }
@@ -37,7 +37,32 @@ describe('conversation engine', () => {
     expect(executor.calls[1].prompt).toContain('组织教练：我同意先确认目标')
     expect(restored.conversationRounds[0].status).toBe('COMPLETED')
     expect(restored.conversationMemories[0].disagreements.length).toBeGreaterThan(0)
-    expect(db.getConversation(conversation.id)?.tokenUsed).toBe(60)
+    expect(db.getConversation(conversation.id)?.tokenUsed).toBe(74)
+    expect(turns[0]).toMatchObject({ cachedInputTokens: 5, cacheCreationInputTokens: 2, totalTokens: 37, costUsd: 0.001, model: 'test-model' })
+  })
+
+  it('keeps one native session per participant and sends only unseen shared turns on resume', async () => {
+    const { db, conversation, executor, engine } = setup(2)
+    engine.start(conversation.id)
+    await waitFor(() => db.getConversation(conversation.id)?.status === 'READY_TO_SUMMARIZE')
+    expect(executor.calls).toHaveLength(4)
+    expect(executor.calls[2].prompt).not.toContain('主题：如何提升管理水平')
+    expect(executor.calls[2].prompt).toContain('[消息 #2 · 主持人]')
+    expect(executor.calls[2].prompt).not.toContain('[消息 #1 · 组织教练]')
+    const participants = db.getConversationParticipants(conversation.id)
+    expect(participants.find(item => item.roleName === '组织教练')).toMatchObject({ nativeSessionId: expect.any(String), lastSeenTurnSequence: 3 })
+    expect(participants.find(item => item.isLeader)).toMatchObject({ nativeSessionId: expect.any(String), lastSeenTurnSequence: 4 })
+  })
+
+  it('extends a stopped conversation without replacing participant sessions', async () => {
+    const { db, conversation, executor, engine } = setup()
+    engine.start(conversation.id)
+    await waitFor(() => db.getConversation(conversation.id)?.status === 'READY_TO_SUMMARIZE')
+    expect(db.getConversation(conversation.id)?.stopReason).toBe('MAX_ROUNDS')
+    engine.extend(conversation.id, 1)
+    await waitFor(() => db.getConversation(conversation.id)?.currentRound === 2 && db.getConversation(conversation.id)?.status === 'READY_TO_SUMMARIZE')
+    expect(db.getConversation(conversation.id)).toMatchObject({ maxRounds: 2, currentRound: 2, stopReason: 'MAX_ROUNDS' })
+    expect(executor.calls).toHaveLength(4)
   })
 
   it('prioritizes a directly addressed participant and creates a leader deliverable', async () => {

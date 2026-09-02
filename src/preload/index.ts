@@ -16,6 +16,7 @@ const api: DesktopApi = {
   updateIssue: (issueId, status, resolution) => ipcRenderer.invoke('issue:update', issueId, status, resolution),
   createConversation: (input: CreateConversationInput) => ipcRenderer.invoke('conversation:create', input),
   controlConversation: (conversationId, action) => ipcRenderer.invoke('conversation:control', conversationId, action),
+  extendConversation: (conversationId, additionalRounds) => ipcRenderer.invoke('conversation:extend', conversationId, additionalRounds),
   sendConversationMessage: (conversationId, content, targetParticipantId) => ipcRenderer.invoke('conversation:message', conversationId, content, targetParticipantId),
   summarizeConversation: (conversationId, type) => ipcRenderer.invoke('conversation:summarize', conversationId, type),
   convertConversation: (conversationId, input) => ipcRenderer.invoke('conversation:convert', conversationId, input),

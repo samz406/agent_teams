@@ -109,12 +109,14 @@ export class AppDatabase {
         id TEXT PRIMARY KEY, number INTEGER NOT NULL UNIQUE, title TEXT NOT NULL, topic TEXT NOT NULL,
         background TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL, current_round INTEGER NOT NULL,
         max_rounds INTEGER NOT NULL, max_messages INTEGER NOT NULL, max_tokens INTEGER NOT NULL,
-        message_count INTEGER NOT NULL, token_used INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        message_count INTEGER NOT NULL, token_used INTEGER NOT NULL, stop_reason TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS t_conversation_participant (
         id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, agent_id TEXT NOT NULL, role_name TEXT NOT NULL,
         role_prompt TEXT NOT NULL, speaking_order INTEGER NOT NULL, is_leader INTEGER NOT NULL,
-        enabled INTEGER NOT NULL, native_session_id TEXT, created_at TEXT NOT NULL,
+        enabled INTEGER NOT NULL, native_session_id TEXT, last_seen_turn_sequence INTEGER NOT NULL DEFAULT 0,
+        memory_version INTEGER NOT NULL DEFAULT 0, session_generation INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
         UNIQUE(conversation_id, agent_id)
       );
       CREATE TABLE IF NOT EXISTS t_conversation_round (
@@ -124,8 +126,11 @@ export class AppDatabase {
       );
       CREATE TABLE IF NOT EXISTS t_conversation_turn (
         id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, round_id TEXT, participant_id TEXT, agent_id TEXT,
-        speaker_type TEXT NOT NULL, speaker_name TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL,
-        input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, error TEXT,
+        speaker_type TEXT NOT NULL, speaker_name TEXT NOT NULL, sequence INTEGER NOT NULL DEFAULT 0,
+        content TEXT NOT NULL, status TEXT NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+        cached_input_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_output_tokens INTEGER NOT NULL DEFAULT 0, total_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL, model TEXT, error TEXT,
         created_at TEXT NOT NULL, completed_at TEXT
       );
       CREATE TABLE IF NOT EXISTS t_conversation_memory (
@@ -148,6 +153,30 @@ export class AppDatabase {
     `)
     this.ensureColumn('t_run', 'task_id', 'TEXT')
     this.ensureColumn('t_run', 'agent_session_id', 'TEXT')
+    this.ensureColumn('t_conversation', 'stop_reason', 'TEXT')
+    this.ensureColumn('t_conversation_participant', 'last_seen_turn_sequence', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('t_conversation_participant', 'memory_version', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('t_conversation_participant', 'session_generation', 'INTEGER NOT NULL DEFAULT 1')
+    this.ensureColumn('t_conversation_turn', 'sequence', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('t_conversation_turn', 'cached_input_tokens', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('t_conversation_turn', 'cache_creation_input_tokens', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('t_conversation_turn', 'reasoning_output_tokens', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('t_conversation_turn', 'total_tokens', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('t_conversation_turn', 'cost_usd', 'REAL')
+    this.ensureColumn('t_conversation_turn', 'model', 'TEXT')
+    this.db.exec(`
+      UPDATE t_conversation_turn
+      SET sequence=(SELECT COUNT(*) FROM t_conversation_turn previous WHERE previous.conversation_id=t_conversation_turn.conversation_id AND previous.rowid<=t_conversation_turn.rowid)
+      WHERE sequence=0;
+      UPDATE t_conversation_turn SET total_tokens=input_tokens+output_tokens WHERE total_tokens=0 AND input_tokens+output_tokens>0;
+      UPDATE t_conversation_participant
+      SET last_seen_turn_sequence=COALESCE((SELECT MAX(sequence) FROM t_conversation_turn WHERE participant_id=t_conversation_participant.id AND status='COMPLETED'),0)
+      WHERE native_session_id IS NOT NULL AND last_seen_turn_sequence=0;
+      UPDATE t_conversation
+      SET stop_reason=CASE WHEN token_used>=max_tokens THEN 'TOKEN_BUDGET' WHEN message_count>=max_messages THEN 'MAX_MESSAGES' WHEN current_round>=max_rounds THEN 'MAX_ROUNDS' ELSE 'USER_ENDED' END
+      WHERE status='READY_TO_SUMMARIZE' AND stop_reason IS NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turn_sequence ON t_conversation_turn(conversation_id,sequence);
+    `)
   }
 
   private ensureColumn(table: string, column: string, type: string): void {
@@ -209,7 +238,7 @@ export class AppDatabase {
       conversations: (this.db.prepare('SELECT * FROM t_conversation ORDER BY updated_at DESC').all() as Record<string, unknown>[]).map(mapConversation),
       conversationParticipants: (this.db.prepare('SELECT * FROM t_conversation_participant ORDER BY speaking_order').all() as Record<string, unknown>[]).map(mapConversationParticipant),
       conversationRounds: (this.db.prepare('SELECT * FROM t_conversation_round ORDER BY conversation_id,number').all() as Record<string, unknown>[]).map(mapConversationRound),
-      conversationTurns: (this.db.prepare('SELECT * FROM t_conversation_turn ORDER BY created_at').all() as Record<string, unknown>[]).map(mapConversationTurn),
+      conversationTurns: (this.db.prepare('SELECT * FROM t_conversation_turn ORDER BY conversation_id,sequence').all() as Record<string, unknown>[]).map(mapConversationTurn),
       conversationMemories: (this.db.prepare('SELECT * FROM t_conversation_memory ORDER BY updated_at').all() as Record<string, unknown>[]).map(mapConversationMemory),
       conversationDeliverables: (this.db.prepare('SELECT * FROM t_conversation_deliverable ORDER BY created_at DESC').all() as Record<string, unknown>[]).map(mapConversationDeliverable)
     }
@@ -389,13 +418,15 @@ export class AppDatabase {
     if (new Set(input.participants.map(item => item.agentId)).size !== input.participants.length) throw new Error('同一个 Agent 不能重复加入讨论')
     const number = ((this.db.prepare('SELECT MAX(number) AS n FROM t_conversation').get() as { n: number | null }).n ?? 0) + 1
     const time = now()
-    const value: Conversation = { id: randomUUID(), number, title: input.title.trim(), topic: input.topic.trim(), background: input.background.trim(), mode: input.mode, status: 'DRAFT', currentRound: 0, maxRounds: clamp(input.maxRounds, 1, 50), maxMessages: clamp(input.maxMessages, input.participants.length, 1000), maxTokens: clamp(input.maxTokens, 1000, 1_000_000), messageCount: 0, tokenUsed: 0, createdAt: time, updatedAt: time }
+    const value: Conversation = { id: randomUUID(), number, title: input.title.trim(), topic: input.topic.trim(), background: input.background.trim(), mode: input.mode, status: 'DRAFT', currentRound: 0, maxRounds: clamp(input.maxRounds, 1, 50), maxMessages: clamp(input.maxMessages, input.participants.length, 1000), maxTokens: clamp(input.maxTokens, 1000, 1_000_000), messageCount: 0, tokenUsed: 0, stopReason: null, createdAt: time, updatedAt: time }
     const tx = this.db.transaction(() => {
-      this.db.prepare(`INSERT INTO t_conversation VALUES (@id,@number,@title,@topic,@background,@mode,@status,@currentRound,@maxRounds,@maxMessages,@maxTokens,@messageCount,@tokenUsed,@createdAt,@updatedAt)`).run(value)
+      this.db.prepare(`INSERT INTO t_conversation (id,number,title,topic,background,mode,status,current_round,max_rounds,max_messages,max_tokens,message_count,token_used,stop_reason,created_at,updated_at)
+        VALUES (@id,@number,@title,@topic,@background,@mode,@status,@currentRound,@maxRounds,@maxMessages,@maxTokens,@messageCount,@tokenUsed,@stopReason,@createdAt,@updatedAt)`).run(value)
       input.participants.forEach((participant, index) => {
         const agent = this.getAgent(participant.agentId)
         if (!agent) throw new Error(`Agent ${participant.agentId} 不存在`)
-        this.db.prepare('INSERT INTO t_conversation_participant VALUES (?,?,?,?,?,?,?,?,?,?)').run(randomUUID(), value.id, participant.agentId, participant.roleName.trim() || agent.name, participant.rolePrompt.trim(), index, participant.isLeader ? 1 : 0, 1, null, time)
+        this.db.prepare(`INSERT INTO t_conversation_participant (id,conversation_id,agent_id,role_name,role_prompt,speaking_order,is_leader,enabled,native_session_id,last_seen_turn_sequence,memory_version,session_generation,created_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(randomUUID(), value.id, participant.agentId, participant.roleName.trim() || agent.name, participant.rolePrompt.trim(), index, participant.isLeader ? 1 : 0, 1, null, 0, 0, 1, time)
       })
       this.db.prepare('INSERT INTO t_conversation_memory VALUES (?,?,?,?,?,?,?,?,?)').run(randomUUID(), value.id, 1, '', json([]), json([]), json([]), json([]), time)
       this.event('conversation', value.id, 'CONVERSATION_CREATED', input)
@@ -407,15 +438,20 @@ export class AppDatabase {
   getConversationParticipants(id: string): ConversationParticipant[] { return (this.db.prepare('SELECT * FROM t_conversation_participant WHERE conversation_id=? AND enabled=1 ORDER BY speaking_order').all(id) as Record<string, unknown>[]).map(mapConversationParticipant) }
   getConversationTurns(id: string, limit?: number): ConversationTurn[] {
     const rows = limit
-      ? this.db.prepare('SELECT * FROM (SELECT * FROM t_conversation_turn WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?) ORDER BY created_at').all(id, limit)
-      : this.db.prepare('SELECT * FROM t_conversation_turn WHERE conversation_id=? ORDER BY created_at').all(id)
+      ? this.db.prepare('SELECT * FROM (SELECT * FROM t_conversation_turn WHERE conversation_id=? ORDER BY sequence DESC LIMIT ?) ORDER BY sequence').all(id, limit)
+      : this.db.prepare('SELECT * FROM t_conversation_turn WHERE conversation_id=? ORDER BY sequence').all(id)
     return (rows as Record<string, unknown>[]).map(mapConversationTurn)
   }
+  getConversationTurnsAfter(id: string, sequence: number): ConversationTurn[] { return (this.db.prepare('SELECT * FROM t_conversation_turn WHERE conversation_id=? AND sequence>? ORDER BY sequence').all(id, sequence) as Record<string, unknown>[]).map(mapConversationTurn) }
   getConversationMemory(id: string): ConversationMemory | undefined { const row = this.db.prepare('SELECT * FROM t_conversation_memory WHERE conversation_id=?').get(id) as Record<string, unknown> | undefined; return row ? mapConversationMemory(row) : undefined }
   getConversationDeliverables(id: string): ConversationDeliverable[] { return (this.db.prepare('SELECT * FROM t_conversation_deliverable WHERE conversation_id=? ORDER BY created_at DESC').all(id) as Record<string, unknown>[]).map(mapConversationDeliverable) }
 
-  updateConversationStatus(id: string, status: ConversationStatus): void { this.db.prepare('UPDATE t_conversation SET status=?,updated_at=? WHERE id=?').run(status, now(), id); this.event('conversation', id, `CONVERSATION_${status}`, {}) }
+  updateConversationStatus(id: string, status: ConversationStatus, stopReason: Conversation['stopReason'] = null): void { this.db.prepare('UPDATE t_conversation SET status=?,stop_reason=?,updated_at=? WHERE id=?').run(status, stopReason, now(), id); this.event('conversation', id, `CONVERSATION_${status}`, { stopReason }) }
   updateConversationProgress(id: string, round: number, addedMessages: number, addedTokens: number): void { this.db.prepare('UPDATE t_conversation SET current_round=?,message_count=message_count+?,token_used=token_used+?,updated_at=? WHERE id=?').run(round, addedMessages, addedTokens, now(), id) }
+  extendConversation(id: string, additionalRounds: number, additionalMessages: number): void {
+    this.db.prepare("UPDATE t_conversation SET max_rounds=MIN(50,current_round+?),max_messages=MIN(1000,max_messages+?),status='PAUSED',stop_reason=NULL,updated_at=? WHERE id=?").run(additionalRounds, additionalMessages, now(), id)
+    this.event('conversation', id, 'CONVERSATION_EXTENDED', { additionalRounds, additionalMessages })
+  }
 
   createConversationRound(conversationId: string, number: number, focus: string): ConversationRound {
     const value: ConversationRound = { id: randomUUID(), conversationId, number, focus, status: 'RUNNING', createdAt: now(), completedAt: null }
@@ -428,19 +464,23 @@ export class AppDatabase {
     this.finishConversationRound(row.id, 'INTERRUPTED'); this.updateConversationProgress(conversationId, row.number, 0, 0)
   }
 
-  createConversationTurn(input: Omit<ConversationTurn, 'id' | 'createdAt' | 'completedAt' | 'inputTokens' | 'outputTokens' | 'error'>): ConversationTurn {
-    const value: ConversationTurn = { ...input, id: randomUUID(), inputTokens: 0, outputTokens: 0, error: null, createdAt: now(), completedAt: input.status === 'COMPLETED' ? now() : null }
-    this.db.prepare('INSERT INTO t_conversation_turn VALUES (@id,@conversationId,@roundId,@participantId,@agentId,@speakerType,@speakerName,@content,@status,@inputTokens,@outputTokens,@error,@createdAt,@completedAt)').run(value)
+  createConversationTurn(input: Omit<ConversationTurn, 'id' | 'sequence' | 'createdAt' | 'completedAt' | 'inputTokens' | 'outputTokens' | 'cachedInputTokens' | 'cacheCreationInputTokens' | 'reasoningOutputTokens' | 'totalTokens' | 'costUsd' | 'model' | 'error'>): ConversationTurn {
+    const sequence = Number((this.db.prepare('SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM t_conversation_turn WHERE conversation_id=?').get(input.conversationId) as { sequence: number }).sequence)
+    const value: ConversationTurn = { ...input, id: randomUUID(), sequence, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheCreationInputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0, costUsd: null, model: null, error: null, createdAt: now(), completedAt: input.status === 'COMPLETED' ? now() : null }
+    this.db.prepare(`INSERT INTO t_conversation_turn (id,conversation_id,round_id,participant_id,agent_id,speaker_type,speaker_name,sequence,content,status,input_tokens,output_tokens,cached_input_tokens,cache_creation_input_tokens,reasoning_output_tokens,total_tokens,cost_usd,model,error,created_at,completed_at)
+      VALUES (@id,@conversationId,@roundId,@participantId,@agentId,@speakerType,@speakerName,@sequence,@content,@status,@inputTokens,@outputTokens,@cachedInputTokens,@cacheCreationInputTokens,@reasoningOutputTokens,@totalTokens,@costUsd,@model,@error,@createdAt,@completedAt)`).run(value)
     return value
   }
-  updateConversationTurn(id: string, patch: Partial<Pick<ConversationTurn, 'content' | 'status' | 'inputTokens' | 'outputTokens' | 'error'>>): void {
-    const columns: Record<string, string> = { content: 'content', status: 'status', inputTokens: 'input_tokens', outputTokens: 'output_tokens', error: 'error' }
+  updateConversationTurn(id: string, patch: Partial<Pick<ConversationTurn, 'content' | 'status' | 'inputTokens' | 'outputTokens' | 'cachedInputTokens' | 'cacheCreationInputTokens' | 'reasoningOutputTokens' | 'totalTokens' | 'costUsd' | 'model' | 'error'>>): void {
+    const columns: Record<string, string> = { content: 'content', status: 'status', inputTokens: 'input_tokens', outputTokens: 'output_tokens', cachedInputTokens: 'cached_input_tokens', cacheCreationInputTokens: 'cache_creation_input_tokens', reasoningOutputTokens: 'reasoning_output_tokens', totalTokens: 'total_tokens', costUsd: 'cost_usd', model: 'model', error: 'error' }
     const fields: string[] = []; const values: Record<string, unknown> = { id }
     for (const [key, value] of Object.entries(patch)) { fields.push(`${columns[key]}=@${key}`); values[key] = value }
     if (patch.status && ['COMPLETED','FAILED','CANCELLED'].includes(patch.status)) { fields.push('completed_at=@completedAt'); values.completedAt = now() }
     if (fields.length) this.db.prepare(`UPDATE t_conversation_turn SET ${fields.join(',')} WHERE id=@id`).run(values)
   }
-  updateConversationParticipantSession(id: string, sessionId: string | null): void { if (sessionId) this.db.prepare('UPDATE t_conversation_participant SET native_session_id=? WHERE id=?').run(sessionId, id) }
+  updateConversationParticipantSession(id: string, sessionId: string | null, lastSeenTurnSequence: number, memoryVersion: number): void {
+    this.db.prepare('UPDATE t_conversation_participant SET native_session_id=COALESCE(?,native_session_id),last_seen_turn_sequence=MAX(last_seen_turn_sequence,?),memory_version=MAX(memory_version,?) WHERE id=?').run(sessionId, lastSeenTurnSequence, memoryVersion, id)
+  }
 
   updateConversationMemory(conversationId: string, patch: Pick<ConversationMemory, 'summary' | 'consensus' | 'disagreements' | 'openQuestions' | 'userPreferences'>): void {
     this.db.prepare('UPDATE t_conversation_memory SET version=version+1,summary=?,consensus=?,disagreements=?,open_questions=?,user_preferences=?,updated_at=? WHERE conversation_id=?').run(patch.summary, json(patch.consensus), json(patch.disagreements), json(patch.openQuestions), json(patch.userPreferences), now(), conversationId)
@@ -513,9 +553,9 @@ const mapAgentSession = (r: Record<string, unknown>): AgentSession => ({ id: Str
 const mapHandoff = (r: Record<string, unknown>): Handoff => ({ id: String(r.id), changeId: String(r.change_id), fromTaskId: nullable(r.from_task_id), fromAgentId: nullable(r.from_agent_id), toTaskId: nullable(r.to_task_id), toAgentId: nullable(r.to_agent_id), deliverable: String(r.deliverable), evidenceIds: parse(String(r.evidence_ids), []), status: r.status as Handoff['status'], createdAt: String(r.created_at), acceptedAt: nullable(r.accepted_at) })
 const mapIssue = (r: Record<string, unknown>): Issue => ({ id: String(r.id), changeId: String(r.change_id), taskId: nullable(r.task_id), ownerAgentId: nullable(r.owner_agent_id), title: String(r.title), description: String(r.description), severity: r.severity as Issue['severity'], status: r.status as Issue['status'], sourceEvidenceId: nullable(r.source_evidence_id), resolution: nullable(r.resolution), createdAt: String(r.created_at), updatedAt: String(r.updated_at) })
 const mapIntervention = (r: Record<string, unknown>): HumanIntervention => ({ id: String(r.id), changeId: String(r.change_id), targetAgentId: nullable(r.target_agent_id), affectedRunId: nullable(r.affected_run_id), reason: String(r.reason), newConstraints: String(r.new_constraints), operator: String(r.operator), createdAt: String(r.created_at) })
-const mapConversation = (r: Record<string, unknown>): Conversation => ({ id: String(r.id), number: Number(r.number), title: String(r.title), topic: String(r.topic), background: String(r.background), mode: r.mode as Conversation['mode'], status: r.status as Conversation['status'], currentRound: Number(r.current_round), maxRounds: Number(r.max_rounds), maxMessages: Number(r.max_messages), maxTokens: Number(r.max_tokens), messageCount: Number(r.message_count), tokenUsed: Number(r.token_used), createdAt: String(r.created_at), updatedAt: String(r.updated_at) })
-const mapConversationParticipant = (r: Record<string, unknown>): ConversationParticipant => ({ id: String(r.id), conversationId: String(r.conversation_id), agentId: String(r.agent_id), roleName: String(r.role_name), rolePrompt: String(r.role_prompt), speakingOrder: Number(r.speaking_order), isLeader: Boolean(r.is_leader), enabled: Boolean(r.enabled), nativeSessionId: nullable(r.native_session_id), createdAt: String(r.created_at) })
+const mapConversation = (r: Record<string, unknown>): Conversation => ({ id: String(r.id), number: Number(r.number), title: String(r.title), topic: String(r.topic), background: String(r.background), mode: r.mode as Conversation['mode'], status: r.status as Conversation['status'], currentRound: Number(r.current_round), maxRounds: Number(r.max_rounds), maxMessages: Number(r.max_messages), maxTokens: Number(r.max_tokens), messageCount: Number(r.message_count), tokenUsed: Number(r.token_used), stopReason: nullable(r.stop_reason) as Conversation['stopReason'], createdAt: String(r.created_at), updatedAt: String(r.updated_at) })
+const mapConversationParticipant = (r: Record<string, unknown>): ConversationParticipant => ({ id: String(r.id), conversationId: String(r.conversation_id), agentId: String(r.agent_id), roleName: String(r.role_name), rolePrompt: String(r.role_prompt), speakingOrder: Number(r.speaking_order), isLeader: Boolean(r.is_leader), enabled: Boolean(r.enabled), nativeSessionId: nullable(r.native_session_id), lastSeenTurnSequence: Number(r.last_seen_turn_sequence ?? 0), memoryVersion: Number(r.memory_version ?? 0), sessionGeneration: Number(r.session_generation ?? 1), createdAt: String(r.created_at) })
 const mapConversationRound = (r: Record<string, unknown>): ConversationRound => ({ id: String(r.id), conversationId: String(r.conversation_id), number: Number(r.number), focus: String(r.focus), status: r.status as ConversationRound['status'], createdAt: String(r.created_at), completedAt: nullable(r.completed_at) })
-const mapConversationTurn = (r: Record<string, unknown>): ConversationTurn => ({ id: String(r.id), conversationId: String(r.conversation_id), roundId: nullable(r.round_id), participantId: nullable(r.participant_id), agentId: nullable(r.agent_id), speakerType: r.speaker_type as ConversationTurn['speakerType'], speakerName: String(r.speaker_name), content: String(r.content), status: r.status as ConversationTurn['status'], inputTokens: Number(r.input_tokens), outputTokens: Number(r.output_tokens), error: nullable(r.error), createdAt: String(r.created_at), completedAt: nullable(r.completed_at) })
+const mapConversationTurn = (r: Record<string, unknown>): ConversationTurn => ({ id: String(r.id), conversationId: String(r.conversation_id), roundId: nullable(r.round_id), participantId: nullable(r.participant_id), agentId: nullable(r.agent_id), speakerType: r.speaker_type as ConversationTurn['speakerType'], speakerName: String(r.speaker_name), sequence: Number(r.sequence ?? 0), content: String(r.content), status: r.status as ConversationTurn['status'], inputTokens: Number(r.input_tokens), outputTokens: Number(r.output_tokens), cachedInputTokens: Number(r.cached_input_tokens ?? 0), cacheCreationInputTokens: Number(r.cache_creation_input_tokens ?? 0), reasoningOutputTokens: Number(r.reasoning_output_tokens ?? 0), totalTokens: Number(r.total_tokens ?? Number(r.input_tokens) + Number(r.output_tokens)), costUsd: r.cost_usd === null || r.cost_usd === undefined ? null : Number(r.cost_usd), model: nullable(r.model), error: nullable(r.error), createdAt: String(r.created_at), completedAt: nullable(r.completed_at) })
 const mapConversationMemory = (r: Record<string, unknown>): ConversationMemory => ({ id: String(r.id), conversationId: String(r.conversation_id), version: Number(r.version), summary: String(r.summary), consensus: parse(String(r.consensus), []), disagreements: parse(String(r.disagreements), []), openQuestions: parse(String(r.open_questions), []), userPreferences: parse(String(r.user_preferences), []), updatedAt: String(r.updated_at) })
 const mapConversationDeliverable = (r: Record<string, unknown>): ConversationDeliverable => ({ id: String(r.id), conversationId: String(r.conversation_id), type: r.type as ConversationDeliverable['type'], title: String(r.title), content: String(r.content), status: r.status as ConversationDeliverable['status'], convertedChangeId: nullable(r.converted_change_id), createdAt: String(r.created_at) })

@@ -4,10 +4,11 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { Agent, Conversation, ConversationDeliverable, ConversationMemory, ConversationParticipant, ConversationTurn, RuntimeInfo } from '../shared/contracts'
 import type { AppDatabase } from '../main/database'
 import { extractTokenUsage } from '../main/runtime/parser'
+import { extractUsageSummary } from '../shared/usage'
 import { AdapterRegistry, type RuntimeAdapter } from './adapters'
 import { RuntimeQueue } from './runtime-queue'
 
-type ChatResult = { content: string; nativeSessionId: string | null; inputTokens: number; outputTokens: number }
+type ChatResult = { content: string; nativeSessionId: string | null; inputTokens: number; outputTokens: number; cachedInputTokens?: number; cacheCreationInputTokens?: number; reasoningOutputTokens?: number; totalTokens?: number; costUsd?: number | null; model?: string | null }
 
 export interface ConversationExecutor {
   execute(conversation: Conversation, participant: ConversationParticipant, agent: Agent, turnId: string, prompt: string): Promise<ChatResult>
@@ -46,8 +47,9 @@ export class AdapterConversationExecutor implements ConversationExecutor {
         if (this.cancelled.has(conversation.id)) return
         if (code !== 0) throw new Error(`Agent 对话执行失败（exit=${code ?? 'null'}）：${stderr.slice(-1000)}`)
         const parsed = adapter.parse(stdout)
-        const usage = extractTokenUsage(stdout, prompt, parsed.finalResponse)
-        result = { content: parsed.finalResponse, nativeSessionId: parsed.nativeSessionId, ...usage }
+        const reported = extractUsageSummary(stdout)
+        const fallback = extractTokenUsage(stdout, prompt, parsed.finalResponse)
+        result = { content: parsed.finalResponse, nativeSessionId: parsed.nativeSessionId, inputTokens: reported?.usage.inputTokens ?? fallback.inputTokens, outputTokens: reported?.usage.outputTokens ?? fallback.outputTokens, cachedInputTokens: reported?.usage.cachedInputTokens ?? 0, cacheCreationInputTokens: reported?.usage.cacheCreationInputTokens ?? 0, reasoningOutputTokens: reported?.usage.reasoningOutputTokens ?? 0, totalTokens: reported?.usage.totalTokens ?? fallback.inputTokens + fallback.outputTokens, costUsd: reported?.costUsd ?? null, model: reported?.model ?? null }
       } catch (error) { failure = error }
       finally { this.active.delete(conversation.id) }
     })
@@ -91,8 +93,21 @@ export class ConversationEngine {
 
   async end(conversationId: string): Promise<void> {
     this.requireConversation(conversationId)
-    this.db.updateConversationStatus(conversationId, 'READY_TO_SUMMARIZE'); this.db.interruptActiveConversationRound(conversationId); await this.executor.cancel(conversationId, true)
+    this.db.updateConversationStatus(conversationId, 'READY_TO_SUMMARIZE', 'USER_ENDED'); this.db.interruptActiveConversationRound(conversationId); await this.executor.cancel(conversationId, true)
     this.systemTurn(conversationId, '讨论已结束。你可以生成总结、行动计划、设计 Brief、PRD 或决策矩阵，也可以将结论转为正式任务。'); this.changed()
+  }
+
+  extend(conversationId: string, additionalRounds: number): void {
+    const conversation = this.requireConversation(conversationId)
+    if (conversation.status !== 'READY_TO_SUMMARIZE') throw new Error('只有已停止的讨论可以追加轮次')
+    if (conversation.stopReason === 'TOKEN_BUDGET' || conversation.tokenUsed >= conversation.maxTokens) throw new Error('讨论已达到 Token 安全上限，请先生成产物或转为正式任务')
+    const rounds = Math.min(3, Math.max(1, Math.round(additionalRounds)))
+    if (conversation.currentRound >= 50) throw new Error('讨论已达到最高 50 轮')
+    const participantCount = this.db.getConversationParticipants(conversationId).length
+    const acceptedRounds = Math.min(rounds, 50 - conversation.currentRound)
+    const extraMessages = Math.max(0, conversation.messageCount + participantCount * acceptedRounds - conversation.maxMessages)
+    this.db.extendConversation(conversationId, acceptedRounds, extraMessages)
+    this.start(conversationId)
   }
 
   sendMessage(conversationId: string, content: string, targetParticipantId?: string): void {
@@ -120,15 +135,14 @@ export class ConversationEngine {
     this.changed()
     try {
       this.db.updateConversationTurn(turn.id, { status: 'RUNNING' }); this.changed()
-      const result = await this.executor.execute(conversation, leader, agent, turn.id, this.summaryPrompt(conversation, type))
-      this.db.updateConversationParticipantSession(leader.id, result.nativeSessionId)
-      this.db.updateConversationTurn(turn.id, { status: 'COMPLETED', content: result.content, inputTokens: result.inputTokens, outputTokens: result.outputTokens })
-      this.db.updateConversationProgress(conversationId, conversation.currentRound, 1, result.inputTokens + result.outputTokens)
+      const result = await this.executor.execute(conversation, { ...leader, nativeSessionId: null }, agent, turn.id, this.summaryPrompt(conversation, type))
+      this.db.updateConversationTurn(turn.id, { status: 'COMPLETED', content: result.content, ...usagePatch(result) })
+      this.db.updateConversationProgress(conversationId, conversation.currentRound, 1, totalTokens(result))
       this.db.createConversationDeliverable(conversationId, type, `${conversation.title} · ${deliverableLabel(type)}`, result.content)
       this.db.updateConversationStatus(conversationId, 'COMPLETED'); this.changed()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      this.db.updateConversationTurn(turn.id, { status: 'FAILED', error: message }); this.db.updateConversationStatus(conversationId, 'READY_TO_SUMMARIZE'); this.changed(); throw error
+      this.db.updateConversationTurn(turn.id, { status: 'FAILED', error: message }); this.db.updateConversationStatus(conversationId, 'READY_TO_SUMMARIZE', 'ERROR'); this.changed(); throw error
     }
   }
 
@@ -161,14 +175,14 @@ export class ConversationEngine {
         const latest = this.requireConversation(conversationId)
         this.db.finishConversationRound(round.id, latest.status === 'RUNNING' ? 'COMPLETED' : 'INTERRUPTED')
         this.refreshMemory(conversationId, round.id)
-        if (!successes && latest.status === 'RUNNING') { this.db.updateConversationStatus(conversationId, 'FAILED'); this.systemTurn(conversationId, '本轮没有 Agent 成功返回，请检查 Runtime 配置后恢复讨论。'); this.changed(); return }
+        if (!successes && latest.status === 'RUNNING') { this.db.updateConversationStatus(conversationId, 'FAILED', 'ERROR'); this.systemTurn(conversationId, '本轮没有 Agent 成功返回，请检查 Runtime 配置后恢复讨论。'); this.changed(); return }
         if (latest.status !== 'RUNNING') return
         const progressed = this.requireConversation(conversationId)
         if (this.limitReached(progressed)) { this.readyToSummarize(progressed); return }
       }
     } catch (error) {
       const current = this.db.getConversation(conversationId)
-      if (current?.status === 'RUNNING') { this.db.updateConversationStatus(conversationId, 'FAILED'); this.systemTurn(conversationId, `讨论编排失败：${error instanceof Error ? error.message : String(error)}`); this.changed() }
+      if (current?.status === 'RUNNING') { this.db.updateConversationStatus(conversationId, 'FAILED', 'ERROR'); this.systemTurn(conversationId, `讨论编排失败：${error instanceof Error ? error.message : String(error)}`); this.changed() }
     }
   }
 
@@ -180,11 +194,12 @@ export class ConversationEngine {
     this.changed()
     try {
       this.db.updateConversationTurn(turn.id, { status: 'RUNNING' }); this.changed()
+      const memoryVersion = this.db.getConversationMemory(conversation.id)?.version ?? participant.memoryVersion
       const prompt = this.participantPrompt(conversation, participant, roundNumber, focus)
       const result = await this.executor.execute(conversation, participant, agent, turn.id, prompt)
-      this.db.updateConversationParticipantSession(participant.id, result.nativeSessionId)
-      this.db.updateConversationTurn(turn.id, { content: result.content, status: 'COMPLETED', inputTokens: result.inputTokens, outputTokens: result.outputTokens })
-      this.db.updateConversationProgress(conversation.id, roundNumber, 1, result.inputTokens + result.outputTokens); this.changed(); return true
+      this.db.updateConversationParticipantSession(participant.id, result.nativeSessionId, turn.sequence, memoryVersion)
+      this.db.updateConversationTurn(turn.id, { content: result.content, status: 'COMPLETED', ...usagePatch(result) })
+      this.db.updateConversationProgress(conversation.id, roundNumber, 1, totalTokens(result)); this.changed(); return true
     } catch (error) {
       const latest = this.db.getConversation(conversation.id)
       const cancelled = latest?.status === 'PAUSED' || latest?.status === 'READY_TO_SUMMARIZE'
@@ -196,11 +211,13 @@ export class ConversationEngine {
 
   private participantPrompt(conversation: Conversation, participant: ConversationParticipant, roundNumber: number, focus: string): string {
     const memory = this.db.getConversationMemory(conversation.id)
-    const recentTurns = this.db.getConversationTurns(conversation.id, 14).filter(item => item.status === 'COMPLETED' && item.content)
-    const recent = recentTurns.map(item => `[${item.speakerName}${item.participantId === participant.id && item.speakerType === 'human' ? ' → 请你回答' : ''}] ${item.content.slice(0, 1400)}`).join('\n\n')
+    const newTurns = this.db.getConversationTurnsAfter(conversation.id, participant.lastSeenTurnSequence).filter(item => item.status === 'COMPLETED' && item.content)
+    const updates = newTurns.map(item => `[消息 #${item.sequence} · ${item.speakerName}${item.participantId === participant.id && item.speakerType === 'human' ? ' → 请你回答' : ''}] ${item.content.slice(0, 1600)}`).join('\n\n')
     const modeInstruction = modeInstructions[conversation.mode]
     const leaderInstruction = participant.isLeader ? '你是主持人。识别重复、共识、分歧和未回答问题；不要垄断讨论，本轮末给出收敛意见与下一轮建议。' : '明确回应其他角色已经提出的观点，贡献新的判断、例子或反驳，禁止只做同义复述。'
-    return `你正在参加 Moxt 主题讨论。不得操作文件、Shell 或网络；本次只进行思考与表达。\n\n主题：${conversation.topic}\n背景：${conversation.background || '无额外背景'}\n讨论模式：${modeInstruction}\n当前第 ${roundNumber}/${conversation.maxRounds} 轮\n本轮焦点：${focus}\n\n你的角色：${participant.roleName}\n角色要求：${participant.rolePrompt || '从你的专业视角提供有区分度的判断。'}\n${leaderInstruction}\n\n共享记忆：\n${formatMemory(memory)}\n\n最近对话：\n${recent || '尚无其他发言。'}\n\n请使用中文，观点具体、有机制、有例子，控制在 600 字以内。`
+    const base = participant.nativeSessionId ? '' : `你正在参加 Moxt 主题讨论。不得操作文件、Shell 或网络；本次只进行思考与表达。\n\n主题：${conversation.topic}\n背景：${conversation.background || '无额外背景'}\n讨论模式：${modeInstruction}\n你的角色：${participant.roleName}\n角色要求：${participant.rolePrompt || '从你的专业视角提供有区分度的判断。'}\n${leaderInstruction}\n\n`
+    const memoryUpdate = !participant.nativeSessionId || participant.memoryVersion < (memory?.version ?? 0) ? `共享记忆 v${memory?.version ?? 0}（以此版本覆盖旧记忆）：\n${formatMemory(memory, Boolean(participant.nativeSessionId))}\n\n` : ''
+    return `${base}当前第 ${roundNumber}/${conversation.maxRounds} 轮\n本轮焦点：${focus}\n\n${memoryUpdate}你上次发言后新增的共享消息：\n${updates || '没有新增消息，请直接围绕本轮焦点推进。'}\n\n继续保持“${participant.roleName}”角色，只回应以上新增信息，不要复述已经讨论过的内容。请使用中文，观点具体、有机制、有例子，普通角色控制在 400 字以内，Leader 控制在 600 字以内。`
   }
 
   private summaryPrompt(conversation: Conversation, type: ConversationDeliverable['type']): string {
@@ -232,7 +249,12 @@ export class ConversationEngine {
 
   private limitReached(value: Conversation): boolean { return value.currentRound >= value.maxRounds || value.messageCount >= value.maxMessages || value.tokenUsed >= value.maxTokens }
   private budgetReached(value: Conversation): boolean { return value.messageCount >= value.maxMessages || value.tokenUsed >= value.maxTokens }
-  private readyToSummarize(conversation: Conversation): void { this.db.updateConversationStatus(conversation.id, 'READY_TO_SUMMARIZE'); this.systemTurn(conversation.id, '已达到轮次、消息数或 Token 上限。讨论不会继续自动运行，请选择生成总结或转为正式任务。'); this.changed() }
+  private readyToSummarize(conversation: Conversation): void {
+    const reason: NonNullable<Conversation['stopReason']> = conversation.tokenUsed >= conversation.maxTokens ? 'TOKEN_BUDGET' : conversation.messageCount >= conversation.maxMessages ? 'MAX_MESSAGES' : 'MAX_ROUNDS'
+    this.db.updateConversationStatus(conversation.id, 'READY_TO_SUMMARIZE', reason)
+    this.systemTurn(conversation.id, reason === 'TOKEN_BUDGET' ? '已达到 Token 安全上限，讨论已停止自动运行。' : reason === 'MAX_MESSAGES' ? '已达到消息数量上限，讨论已停止自动运行。' : '已完成设定轮数，讨论已停止自动运行。')
+    this.changed()
+  }
   private systemTurn(conversationId: string, content: string): void { this.db.createConversationTurn({ conversationId, roundId: null, participantId: null, agentId: null, speakerType: 'system', speakerName: 'System', content, status: 'COMPLETED' }) }
   private requireConversation(id: string): Conversation { const value = this.db.getConversation(id); if (!value) throw new Error('讨论不存在'); return value }
 }
@@ -245,5 +267,7 @@ const modeInstructions: Record<Conversation['mode'], string> = {
 }
 const deliverableLabel = (type: ConversationDeliverable['type']): string => ({ SUMMARY: '讨论总结', ACTION_PLAN: '行动计划', DESIGN_BRIEF: 'Design Brief', PRD: '产品需求文档', DECISION_MATRIX: '决策矩阵', MARKDOWN: '主题文档' }[type])
 const estimateTokens = (value: string): number => Math.max(1, Math.ceil(value.length / 3))
+const totalTokens = (result: ChatResult): number => result.totalTokens ?? result.inputTokens + result.outputTokens
+const usagePatch = (result: ChatResult): Pick<ConversationTurn, 'inputTokens' | 'outputTokens' | 'cachedInputTokens' | 'cacheCreationInputTokens' | 'reasoningOutputTokens' | 'totalTokens' | 'costUsd' | 'model'> => ({ inputTokens: result.inputTokens, outputTokens: result.outputTokens, cachedInputTokens: result.cachedInputTokens ?? 0, cacheCreationInputTokens: result.cacheCreationInputTokens ?? 0, reasoningOutputTokens: result.reasoningOutputTokens ?? 0, totalTokens: totalTokens(result), costUsd: result.costUsd ?? null, model: result.model ?? null })
 const dedupe = (values: string[]): string[] => [...new Set(values.map(item => item.trim()).filter(Boolean))]
-const formatMemory = (memory: ConversationMemory | undefined): string => memory ? `阶段摘要：${memory.summary || '暂无'}\n共识：${memory.consensus.join('；') || '暂无'}\n分歧：${memory.disagreements.join('；') || '暂无'}\n待回答：${memory.openQuestions.join('；') || '暂无'}\n用户补充：${memory.userPreferences.join('；') || '暂无'}` : '暂无共享记忆'
+const formatMemory = (memory: ConversationMemory | undefined, compact = false): string => memory ? `${compact ? '' : `阶段摘要：${memory.summary || '暂无'}\n`}共识：${memory.consensus.join('；') || '暂无'}\n分歧：${memory.disagreements.join('；') || '暂无'}\n待回答：${memory.openQuestions.join('；') || '暂无'}${compact ? '' : `\n用户补充：${memory.userPreferences.join('；') || '暂无'}`}` : '暂无共享记忆'

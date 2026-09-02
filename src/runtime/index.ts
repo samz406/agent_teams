@@ -76,6 +76,7 @@ async function dispatch(request: RuntimeRequest): Promise<unknown> {
       else await conversationEngine.end(request.conversationId)
       return null
     }
+    case 'conversation.extend': conversationEngine.extend(request.conversationId, request.additionalRounds); return null
     case 'conversation.message': conversationEngine.sendMessage(request.conversationId, request.content, request.targetParticipantId); return null
     case 'conversation.summarize': await conversationEngine.summarize(request.conversationId, request.deliverableType); return null
     case 'conversation.export-markdown': return conversationEngine.exportMarkdown(request.conversationId)

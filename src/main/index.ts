@@ -38,6 +38,7 @@ function registerIpc(): void {
   ipcMain.handle('issue:update', (_event, issueId: string, status: IssueStatus, resolution?: string) => runtime.request({ type: 'issue.update', issueId, status, resolution }))
   ipcMain.handle('conversation:create', (_event, input: CreateConversationInput) => runtime.request({ type: 'conversation.create', input }))
   ipcMain.handle('conversation:control', (_event, conversationId: string, action: 'start' | 'pause' | 'resume' | 'end') => runtime.request({ type: 'conversation.control', conversationId, action }))
+  ipcMain.handle('conversation:extend', (_event, conversationId: string, additionalRounds: number) => runtime.request({ type: 'conversation.extend', conversationId, additionalRounds }))
   ipcMain.handle('conversation:message', (_event, conversationId: string, content: string, targetParticipantId?: string) => runtime.request({ type: 'conversation.message', conversationId, content, targetParticipantId }))
   ipcMain.handle('conversation:summarize', (_event, conversationId: string, deliverableType) => runtime.request({ type: 'conversation.summarize', conversationId, deliverableType }))
   ipcMain.handle('conversation:convert', (_event, conversationId: string, input: ConvertConversationInput) => runtime.request({ type: 'conversation.convert', conversationId, input }))

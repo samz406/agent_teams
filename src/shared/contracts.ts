@@ -8,6 +8,7 @@ export type IssueStatus = 'OPEN' | 'FIXING' | 'RESOLVED' | 'VERIFIED' | 'WONT_FI
 export type PermissionSet = { read: boolean; write: boolean; shell: boolean; git: boolean; network: boolean }
 export type ConversationMode = 'roundtable' | 'brainstorm' | 'debate' | 'consultation'
 export type ConversationStatus = 'DRAFT' | 'RUNNING' | 'PAUSED' | 'READY_TO_SUMMARIZE' | 'COMPLETED' | 'FAILED'
+export type ConversationStopReason = 'MAX_ROUNDS' | 'MAX_MESSAGES' | 'TOKEN_BUDGET' | 'USER_ENDED' | 'ERROR' | null
 
 export interface RuntimeInfo {
   type: RuntimeType
@@ -238,6 +239,7 @@ export interface Conversation {
   maxTokens: number
   messageCount: number
   tokenUsed: number
+  stopReason: ConversationStopReason
   createdAt: string
   updatedAt: string
 }
@@ -252,6 +254,9 @@ export interface ConversationParticipant {
   isLeader: boolean
   enabled: boolean
   nativeSessionId: string | null
+  lastSeenTurnSequence: number
+  memoryVersion: number
+  sessionGeneration: number
   createdAt: string
 }
 
@@ -273,10 +278,17 @@ export interface ConversationTurn {
   agentId: string | null
   speakerType: 'human' | 'agent' | 'leader' | 'system'
   speakerName: string
+  sequence: number
   content: string
   status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
   inputTokens: number
   outputTokens: number
+  cachedInputTokens: number
+  cacheCreationInputTokens: number
+  reasoningOutputTokens: number
+  totalTokens: number
+  costUsd: number | null
+  model: string | null
   error: string | null
   createdAt: string
   completedAt: string | null
@@ -383,6 +395,7 @@ export interface DesktopApi {
   updateIssue(issueId: string, status: IssueStatus, resolution?: string): Promise<void>
   createConversation(input: CreateConversationInput): Promise<Conversation>
   controlConversation(conversationId: string, action: 'start' | 'pause' | 'resume' | 'end'): Promise<void>
+  extendConversation(conversationId: string, additionalRounds: number): Promise<void>
   sendConversationMessage(conversationId: string, content: string, targetParticipantId?: string): Promise<void>
   summarizeConversation(conversationId: string, type: ConversationDeliverable['type']): Promise<void>
   convertConversation(conversationId: string, input: ConvertConversationInput): Promise<Change>
@@ -405,6 +418,7 @@ export type RuntimeRequest =
   | { type: 'issue.update'; issueId: string; status: IssueStatus; resolution?: string }
   | { type: 'conversation.create'; input: CreateConversationInput }
   | { type: 'conversation.control'; conversationId: string; action: 'start' | 'pause' | 'resume' | 'end' }
+  | { type: 'conversation.extend'; conversationId: string; additionalRounds: number }
   | { type: 'conversation.message'; conversationId: string; content: string; targetParticipantId?: string }
   | { type: 'conversation.summarize'; conversationId: string; deliverableType: ConversationDeliverable['type'] }
   | { type: 'conversation.convert'; conversationId: string; input: ConvertConversationInput }
