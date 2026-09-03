@@ -94,7 +94,7 @@ export class ConversationEngine {
   async end(conversationId: string): Promise<void> {
     this.requireConversation(conversationId)
     this.db.updateConversationStatus(conversationId, 'READY_TO_SUMMARIZE', 'USER_ENDED'); this.db.interruptActiveConversationRound(conversationId); await this.executor.cancel(conversationId, true)
-    this.systemTurn(conversationId, '讨论已结束。你可以生成总结、行动计划、设计 Brief、PRD 或决策矩阵，也可以将结论转为正式任务。'); this.changed()
+    this.systemTurn(conversationId, '讨论已结束。你可以生成总结、行动计划、设计 Brief、PRD、决策矩阵或战略议题清单，也可以将结论转为正式任务。'); this.changed()
   }
 
   extend(conversationId: string, additionalRounds: number): void {
@@ -214,7 +214,11 @@ export class ConversationEngine {
     const newTurns = this.db.getConversationTurnsAfter(conversation.id, participant.lastSeenTurnSequence).filter(item => item.status === 'COMPLETED' && item.content)
     const updates = newTurns.map(item => `[消息 #${item.sequence} · ${item.speakerName}${item.participantId === participant.id && item.speakerType === 'human' ? ' → 请你回答' : ''}] ${item.content.slice(0, 1600)}`).join('\n\n')
     const modeInstruction = modeInstructions[conversation.mode]
-    const leaderInstruction = participant.isLeader ? '你是主持人。识别重复、共识、分歧和未回答问题；不要垄断讨论，本轮末给出收敛意见与下一轮建议。' : '明确回应其他角色已经提出的观点，贡献新的判断、例子或反驳，禁止只做同义复述。'
+    const leaderInstruction = participant.isLeader
+      ? conversation.mode === 'retreat'
+        ? '你是务虚会主持人。拉开时间尺度，识别变化、路径依赖、战略矛盾与关键假设；避免过早拆任务，每轮末明确观察、分歧和待验证问题。'
+        : '你是主持人。识别重复、共识、分歧和未回答问题；不要垄断讨论，本轮末给出收敛意见与下一轮建议。'
+      : '明确回应其他角色已经提出的观点，贡献新的判断、例子或反驳，禁止只做同义复述。'
     const base = participant.nativeSessionId ? '' : `你正在参加 Moxt 主题讨论。不得操作文件、Shell 或网络；本次只进行思考与表达。\n\n主题：${conversation.topic}\n背景：${conversation.background || '无额外背景'}\n讨论模式：${modeInstruction}\n你的角色：${participant.roleName}\n角色要求：${participant.rolePrompt || '从你的专业视角提供有区分度的判断。'}\n${leaderInstruction}\n\n`
     const memoryUpdate = !participant.nativeSessionId || participant.memoryVersion < (memory?.version ?? 0) ? `共享记忆 v${memory?.version ?? 0}（以此版本覆盖旧记忆）：\n${formatMemory(memory, Boolean(participant.nativeSessionId))}\n\n` : ''
     return `${base}当前第 ${roundNumber}/${conversation.maxRounds} 轮\n本轮焦点：${focus}\n\n${memoryUpdate}你上次发言后新增的共享消息：\n${updates || '没有新增消息，请直接围绕本轮焦点推进。'}\n\n继续保持“${participant.roleName}”角色，只回应以上新增信息，不要复述已经讨论过的内容。请使用中文，观点具体、有机制、有例子，普通角色控制在 400 字以内，Leader 控制在 600 字以内。`
@@ -223,7 +227,10 @@ export class ConversationEngine {
   private summaryPrompt(conversation: Conversation, type: ConversationDeliverable['type']): string {
     const memory = this.db.getConversationMemory(conversation.id)
     const turns = this.db.getConversationTurns(conversation.id).filter(item => item.status === 'COMPLETED' && item.content).slice(-40).map(item => `[${item.speakerName}] ${item.content.slice(0, 1800)}`).join('\n\n')
-    return `你是本次讨论的 Leader。基于真实聊天记录生成“${deliverableLabel(type)}”，不得杜撰讨论中没有出现的事实。主题：${conversation.topic}\n背景：${conversation.background}\n\n共享记忆：\n${formatMemory(memory)}\n\n聊天记录：\n${turns}\n\n输出完整 Markdown。先给核心结论，再写主要观点、关键分歧、用户需要做的选择和下一步行动；保留有价值的少数意见。`
+    const formatInstruction = type === 'STRATEGIC_AGENDA'
+      ? '输出完整 Markdown，依次写：核心判断、外部变化信号、内部长期矛盾、关键假设与不同情景、战略议题清单、需要验证的问题，以及明确暂不进入的执行细节。不要把务虚会强行改写成任务分解。'
+      : '输出完整 Markdown。先给核心结论，再写主要观点、关键分歧、用户需要做的选择和下一步行动；保留有价值的少数意见。'
+    return `你是本次讨论的 Leader。基于真实聊天记录生成“${deliverableLabel(type)}”，不得杜撰讨论中没有出现的事实。主题：${conversation.topic}\n背景：${conversation.background}\n\n共享记忆：\n${formatMemory(memory)}\n\n聊天记录：\n${turns}\n\n${formatInstruction}`
   }
 
   private refreshMemory(conversationId: string, roundId: string): void {
@@ -241,6 +248,17 @@ export class ConversationEngine {
 
   private nextFocus(conversation: Conversation): string {
     const memory = this.db.getConversationMemory(conversation.id)
+    if (conversation.mode === 'retreat') {
+      const progress = conversation.currentRound / Math.max(1, conversation.maxRounds)
+      const stage = progress < 0.25
+        ? '从未来一到三年回看当前：识别真正值得关注的外部变化、弱信号和时间窗口'
+        : progress < 0.5
+          ? '反思现有目标、资源配置和成功经验：暴露路径依赖、长期矛盾与不行动的代价'
+          : progress < 0.75
+            ? '构造乐观、基准和压力情景：挑战关键假设，找出不同情景下都重要的变量'
+            : '收敛战略议题、关键判断与待验证假设，并明确哪些执行细节暂不讨论'
+      return memory?.openQuestions[0] ? `${stage}；同时回应待确认问题：${memory.openQuestions[0]}` : stage
+    }
     if (memory?.openQuestions.length) return memory.openQuestions[0]
     if (conversation.currentRound === 0) return '独立给出你的核心判断、依据和一个具体例子'
     if (conversation.currentRound === 1) return '回应其他角色，指出你认同、质疑或需要补充的部分'
@@ -263,9 +281,10 @@ const modeInstructions: Record<Conversation['mode'], string> = {
   roundtable: '圆桌讨论：从不同专业视角分析，交叉回应并逐步形成判断。',
   brainstorm: '头脑风暴：先发散产生差异化想法，再组合、筛选，不要过早否定。',
   debate: '正反辩论：主动暴露假设、反例、代价和二阶影响，以论证而不是立场取胜。',
-  consultation: '专家会诊：给出假设、依据、风险、建议以及仍需确认的信息。'
+  consultation: '专家会诊：给出假设、依据、风险、建议以及仍需确认的信息。',
+  retreat: '务虚会：拉开时间尺度，先观察变化与反思现状，暴露路径依赖和关键假设；避免过早讨论具体执行，最终收敛为战略议题与待验证方向。'
 }
-const deliverableLabel = (type: ConversationDeliverable['type']): string => ({ SUMMARY: '讨论总结', ACTION_PLAN: '行动计划', DESIGN_BRIEF: 'Design Brief', PRD: '产品需求文档', DECISION_MATRIX: '决策矩阵', MARKDOWN: '主题文档' }[type])
+const deliverableLabel = (type: ConversationDeliverable['type']): string => ({ SUMMARY: '讨论总结', ACTION_PLAN: '行动计划', DESIGN_BRIEF: 'Design Brief', PRD: '产品需求文档', DECISION_MATRIX: '决策矩阵', STRATEGIC_AGENDA: '战略议题清单', MARKDOWN: '主题文档' }[type])
 const estimateTokens = (value: string): number => Math.max(1, Math.ceil(value.length / 3))
 const totalTokens = (result: ChatResult): number => result.totalTokens ?? result.inputTokens + result.outputTokens
 const usagePatch = (result: ChatResult): Pick<ConversationTurn, 'inputTokens' | 'outputTokens' | 'cachedInputTokens' | 'cacheCreationInputTokens' | 'reasoningOutputTokens' | 'totalTokens' | 'costUsd' | 'model'> => ({ inputTokens: result.inputTokens, outputTokens: result.outputTokens, cachedInputTokens: result.cachedInputTokens ?? 0, cacheCreationInputTokens: result.cacheCreationInputTokens ?? 0, reasoningOutputTokens: result.reasoningOutputTokens ?? 0, totalTokens: totalTokens(result), costUsd: result.costUsd ?? null, model: result.model ?? null })

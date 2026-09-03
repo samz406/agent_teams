@@ -20,7 +20,7 @@ const agents = ['a', 'b', 'c', 'd'].map((id, index) => ({
 })) as Agent[]
 
 describe('conversation role templates', () => {
-  it.each(['roundtable', 'brainstorm', 'debate', 'consultation'] as ConversationMode[])('creates distinct mode roles for %s', mode => {
+  it.each(['roundtable', 'brainstorm', 'debate', 'consultation', 'retreat'] as ConversationMode[])('creates distinct mode roles for %s', mode => {
     const participants = buildConversationParticipants(mode, agents)
     expect(participants).toHaveLength(4)
     expect(new Set(participants.map(item => item.agentId)).size).toBe(4)
@@ -32,6 +32,7 @@ describe('conversation role templates', () => {
     expect(buildConversationParticipants('roundtable', agents).map(item => item.roleName)).not.toContain('Executor 1')
     expect(buildConversationParticipants('brainstorm', agents)[1].roleName).toBe('用户洞察者')
     expect(buildConversationParticipants('debate', agents)[2].roleName).toBe('反对方')
+    expect(buildConversationParticipants('retreat', agents).map(item => item.roleName)).toEqual(['务虚会主持人', '外部环境观察者', '组织反思者', '未来推演者'])
   })
 
   it('detects an active @ query at the cursor', () => {

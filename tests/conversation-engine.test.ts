@@ -19,10 +19,10 @@ class FakeExecutor implements ConversationExecutor {
   async shutdown(): Promise<void> {}
 }
 
-function setup(maxRounds = 1) {
+function setup(maxRounds = 1, mode: Conversation['mode'] = 'roundtable') {
   const root = mkdtempSync(join(tmpdir(), 'moxt-conversation-')); roots.push(root)
   const db = new AppDatabase(join(root, 'db.sqlite')); const agents = db.snapshot([]).agents.slice(0, 2)
-  const conversation = db.createConversation({ title: '管理能力提升', topic: '如何提升管理水平', background: '技术负责人，希望从执行走向管理', mode: 'roundtable', maxRounds, maxMessages: 20, maxTokens: 10000, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: index ? '组织教练' : '主持人', rolePrompt: index ? '关注人的动机与反馈' : '收敛共识和分歧', isLeader: index === 0 })) })
+  const conversation = db.createConversation({ title: '管理能力提升', topic: '如何提升管理水平', background: '技术负责人，希望从执行走向管理', mode, maxRounds, maxMessages: 20, maxTokens: 10000, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: index ? '组织教练' : '主持人', rolePrompt: index ? '关注人的动机与反馈' : '收敛共识和分歧', isLeader: index === 0 })) })
   const executor = new FakeExecutor(); const engine = new ConversationEngine(db, executor, () => undefined)
   return { db, agents, conversation, executor, engine }
 }
@@ -78,6 +78,19 @@ describe('conversation engine', () => {
     expect(db.getConversation(conversation.id)?.status).toBe('COMPLETED')
     expect(snapshot.conversationDeliverables[0].type).toBe('ACTION_PLAN')
     expect(engine.exportMarkdown(conversation.id).content).toContain('讨论记录')
+  })
+
+  it('runs a retreat in strategic stages and creates a strategic agenda', async () => {
+    const { db, conversation, executor, engine } = setup(1, 'retreat')
+    engine.start(conversation.id)
+    await waitFor(() => db.getConversation(conversation.id)?.status === 'READY_TO_SUMMARIZE')
+    expect(executor.calls[0].prompt).toContain('务虚会：拉开时间尺度')
+    expect(executor.calls[0].prompt).toContain('未来一到三年')
+    expect(executor.calls[1].prompt).toContain('避免过早拆任务')
+    await engine.summarize(conversation.id, 'STRATEGIC_AGENDA')
+    expect(executor.calls[2].prompt).toContain('战略议题清单')
+    expect(executor.calls[2].prompt).toContain('不要把务虚会强行改写成任务分解')
+    expect(db.getConversationDeliverables(conversation.id)[0]).toMatchObject({ type: 'STRATEGIC_AGENDA', title: '管理能力提升 · 战略议题清单' })
   })
 
   it('requires exactly one leader', () => {

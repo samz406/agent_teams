@@ -161,17 +161,18 @@ function ResultPanel({ conversation, deliverables, participants, busy, onSummari
   return <div className="conversation-results">
     <aside><h3>生成讨论产物</h3>{deliverableChoices.map(([type, label, description]) => <button disabled={busy || conversation.status === 'RUNNING' || conversation.status === 'DRAFT'} onClick={() => void onSummarize(type)} key={type}><Sparkles/><span><strong>{label}</strong><small>{description}</small></span></button>)}<h3>已有产物</h3>{deliverables.map(item => <button className={current?.id === item.id ? 'active' : ''} onClick={() => setSelected(item.id)} key={item.id}><FileText/><span><strong>{item.title}</strong><small>{new Date(item.createdAt).toLocaleString()}</small></span></button>)}</aside>
     <main>
-      {current ? <article><header><span className="conversation-status completed">FINAL</span><h2>{current.title}</h2></header><div className="markdown"><ReactMarkdown>{current.content}</ReactMarkdown></div></article> : <div className="result-empty"><FileText/><h2>讨论结束后，把聊天转化为可复用的结果</h2><p>可以生成总结、行动计划、设计 Brief、PRD 或决策矩阵。Leader 会保留共识、分歧和少数意见。</p></div>}
+      {current ? <article><header><span className="conversation-status completed">FINAL</span><h2>{current.title}</h2></header><div className="markdown"><ReactMarkdown>{current.content}</ReactMarkdown></div></article> : <div className="result-empty"><FileText/><h2>讨论结束后，把聊天转化为可复用的结果</h2><p>可以生成总结、行动计划、设计 Brief、PRD、决策矩阵或战略议题清单。Leader 会保留共识、分歧和少数意见。</p></div>}
       <div className="convert-task"><div><Workflow/><span><strong>转为正式任务</strong><small>携带讨论结论进入 Workspace、Worktree、Evidence 和 Workflow 执行链路。</small></span></div><select value={workspaceId} onChange={event => setWorkspaceId(event.target.value)}><option value="">选择 Git Workspace</option>{snapshot.workspaces.filter(item => item.repoRoot && item.baseCommit).map(item => <option value={item.id} key={item.id}>{item.name} · {item.branch}</option>)}</select><select value={workflowType} onChange={event => setWorkflowType(event.target.value as WorkflowType)}><option value="cross-project">跨项目协同开发</option><option value="incident">线上问题会诊</option><option value="bug-fix">Bug 修复</option><option value="refactor">大型重构</option><option value="release">发布前检查</option></select><button className="primary" disabled={!workspaceId || converting} onClick={() => void convert()}>{converting ? <LoaderCircle className="spin"/> : <Check/>}创建任务</button></div>
     </main>
   </div>
 }
 
 function Progress({ label, value, max }: { label: string; value: number; max: number }): import('react').JSX.Element { const percent = Math.min(100, max ? value / max * 100 : 0); return <div><span><strong>{label}</strong><small>{value.toLocaleString()} / {max.toLocaleString()}</small></span><i><b style={{ width: `${percent}%` }}/></i></div> }
-const deliverableChoices: Array<[ConversationDeliverable['type'], string, string]> = [['SUMMARY', '讨论总结', '保留主要观点、共识与分歧'], ['ACTION_PLAN', '行动计划', '整理目标、步骤和检查节点'], ['DESIGN_BRIEF', 'Design Brief', '沉淀设计方向与创意约束'], ['PRD', '产品需求文档', '形成可进入开发的产品定义'], ['DECISION_MATRIX', '决策矩阵', '比较方案、代价和选择依据']]
+const deliverableChoices: Array<[ConversationDeliverable['type'], string, string]> = [['SUMMARY', '讨论总结', '保留主要观点、共识与分歧'], ['ACTION_PLAN', '行动计划', '整理目标、步骤和检查节点'], ['DESIGN_BRIEF', 'Design Brief', '沉淀设计方向与创意约束'], ['PRD', '产品需求文档', '形成可进入开发的产品定义'], ['DECISION_MATRIX', '决策矩阵', '比较方案、代价和选择依据'], ['STRATEGIC_AGENDA', '战略议题清单', '沉淀趋势、矛盾、假设与验证方向']]
 const deliverableName = (type: ConversationDeliverable['type']): string => deliverableChoices.find(item => item[0] === type)?.[1] ?? '讨论总结'
 const recommendedDeliverable = (conversation: Conversation): ConversationDeliverable['type'] => {
   const subject = `${conversation.title} ${conversation.topic}`
+  if (conversation.mode === 'retreat') return 'STRATEGIC_AGENDA'
   if (/需求|功能|产品开发|实现一个|开发一个/.test(subject)) return 'PRD'
   if (/网站|界面|视觉|设计灵感|品牌/.test(subject) || conversation.mode === 'brainstorm') return 'DESIGN_BRIEF'
   if (/管理|学习|提升|计划|怎么做|如何/.test(subject) || conversation.mode === 'consultation') return 'ACTION_PLAN'
@@ -182,5 +183,5 @@ const statusName = (status: Conversation['status']): string => ({ DRAFT: '待开
 const stopReasonName = (reason: Conversation['stopReason']): string => ({ MAX_ROUNDS: '已达到轮数', MAX_MESSAGES: '已达到消息数', TOKEN_BUDGET: '已达到 Token 安全线', USER_ENDED: '你已结束讨论', ERROR: '讨论异常停止' }[reason ?? 'USER_ENDED'])
 const completionTitle = (conversation: Conversation): string => conversation.stopReason === 'MAX_ROUNDS' ? `已完成 ${conversation.currentRound} 轮讨论` : conversation.stopReason === 'MAX_MESSAGES' ? `已产生 ${conversation.messageCount} 条消息` : conversation.stopReason === 'TOKEN_BUDGET' ? '本次讨论已停止继续消耗' : '现在可以沉淀讨论结果'
 const isTerminalSystemTurn = (turn: ConversationTurn): boolean => turn.speakerType === 'system' && /讨论已结束|已达到.*上限|已完成设定轮数/.test(turn.content)
-const modeName = (mode: Conversation['mode']): string => ({ roundtable: '圆桌讨论', brainstorm: '头脑风暴', debate: '正反辩论', consultation: '专家会诊' }[mode])
+const modeName = (mode: Conversation['mode']): string => ({ roundtable: '圆桌讨论', brainstorm: '头脑风暴', debate: '正反辩论', consultation: '专家会诊', retreat: '务虚会' }[mode])
 const roleIcon = (name: string): string => name.trim().slice(0, 1) || '角'

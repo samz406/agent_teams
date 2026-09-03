@@ -30,6 +30,12 @@ export const CONVERSATION_ROLE_TEMPLATES: Record<ConversationMode, ConversationR
     { name: '领域专家', prompt: '从专业原理、行业经验和已知模式提出诊断假设与判断依据。', isLeader: false },
     { name: '实施顾问', prompt: '把建议转化为可执行步骤、资源安排、验证指标和迭代路径。', isLeader: false },
     { name: '风险顾问', prompt: '识别信息缺口、边界条件、副作用和需要提前准备的兜底方案。', isLeader: false }
+  ],
+  retreat: [
+    { name: '务虚会主持人', prompt: '拉开时间尺度，明确讨论边界，避免过早进入执行细节；识别关键变化、战略矛盾和待验证假设，最终形成战略议题。', isLeader: true },
+    { name: '外部环境观察者', prompt: '从行业、技术、用户、竞争和政策变化中识别趋势、机会、威胁及其时间窗口。', isLeader: false },
+    { name: '组织反思者', prompt: '审视现有目标、资源配置、能力结构、协作方式与路径依赖，指出制约长期发展的根本矛盾。', isLeader: false },
+    { name: '未来推演者', prompt: '构造乐观、基准和压力情景，检验关键假设、二阶影响与不行动的代价，提出需要验证的方向。', isLeader: false }
   ]
 }
 

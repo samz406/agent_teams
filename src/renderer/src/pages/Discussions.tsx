@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowRight, Bot, Brain, CheckCircle2, Lightbulb, LoaderCircle, MessageCircleMore, Plus, Scale, Stethoscope, Users, X } from 'lucide-react'
+import { ArrowRight, Bot, Brain, CheckCircle2, Compass, Lightbulb, LoaderCircle, MessageCircleMore, Plus, Scale, Stethoscope, Users, X } from 'lucide-react'
 import type { ConversationMode, CreateConversationInput } from '../../../shared/contracts'
 import { buildConversationParticipants } from '../../../shared/conversation-templates'
 import { errorText, useAppStore } from '../store'
@@ -8,7 +8,8 @@ const modes: Array<{ id: ConversationMode; name: string; description: string; ic
   { id: 'roundtable', name: '圆桌讨论', description: '多视角分析、交叉回应并逐步形成判断', icon: <Users/> },
   { id: 'brainstorm', name: '头脑风暴', description: '先发散灵感，再组合和筛选想法', icon: <Lightbulb/> },
   { id: 'debate', name: '正反辩论', description: '暴露假设、反例、代价与二阶影响', icon: <Scale/> },
-  { id: 'consultation', name: '专家会诊', description: '提出假设、依据、风险和行动建议', icon: <Stethoscope/> }
+  { id: 'consultation', name: '专家会诊', description: '提出假设、依据、风险和行动建议', icon: <Stethoscope/> },
+  { id: 'retreat', name: '务虚会', description: '反思长期变化，形成战略议题与待验证假设', icon: <Compass/> }
 ]
 
 export default function Discussions({ onOpen, createRequest }: { onOpen(id: string): void; createRequest?: number }): import('react').JSX.Element {
