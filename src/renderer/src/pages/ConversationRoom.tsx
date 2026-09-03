@@ -86,7 +86,7 @@ export default function ConversationRoom({ conversation, onBack, onOpenTask }: P
         <button className="secondary" onClick={() => void exportFile()}><Download/>导出</button>
       </div>
     </header>
-    <div className="conversation-progress"><Progress label="讨论轮次" value={conversation.currentRound} max={conversation.maxRounds}/><Progress label="消息数量" value={conversation.messageCount} max={conversation.maxMessages}/><Progress label="Token 用量" value={conversation.tokenUsed} max={conversation.maxTokens}/></div>
+    <div className="conversation-progress"><Progress label="讨论轮次" value={conversation.currentRound} max={conversation.maxRounds}/></div>
     <div className="conversation-tabs"><button className={tab === 'discussion' ? 'active' : ''} onClick={() => setTab('discussion')}><MessageCircleMore/>讨论现场</button><button className={tab === 'result' ? 'active' : ''} onClick={() => setTab('result')}><FileText/>讨论产物 <em>{deliverables.length}</em></button></div>
     {tab === 'discussion'
       ? <div className="conversation-layout">
@@ -97,17 +97,17 @@ export default function ConversationRoom({ conversation, onBack, onOpenTask }: P
             <div className="memory-card"><MemorySection title="当前共识" content={memory?.consensus.join('\n\n') || '尚未形成'}/><MemorySection title="主要分歧" content={memory?.disagreements.join('\n\n') || '尚未识别'}/><MemorySection title="待回答问题" content={memory?.openQuestions.join('\n\n') || '暂无'}/></div>
           </aside>
           <main className="conversation-feed">
-            <div className="round-timeline">{rounds.map(round => <span className={round.status.toLowerCase()} key={round.id}>第 {round.number} 轮 · {round.status}</span>)}</div>
+            <div className="round-timeline">{rounds.map(round => <span className={round.status.toLowerCase()} key={round.id}>第 {round.number} 轮 · {roundStatusName(round.status)}</span>)}</div>
             <div className="conversation-scroll">
               {visibleTurns.map(turn => <Turn key={turn.id} turn={turn} targetName={turn.speakerType === 'human' ? participants.find(item => item.id === turn.participantId)?.roleName : undefined}/>) }
               {!turns.length && <div className="conversation-welcome"><Sparkles/><h2>角色和边界已经就绪</h2><p>点击“开始讨论”，成员会依次表达，后一个角色能够看到前面的发言，Leader 在每轮末负责收敛。</p></div>}
               {conversation.status === 'READY_TO_SUMMARIZE' && <CompletionCard conversation={conversation} turns={turns} busy={busy} onSummarize={summarize} onExtend={extend} onOpenResults={() => setTab('result')}/>}
             </div>
             <div className="discussion-composer">
-              <div><select value={target} onChange={event => setTarget(event.target.value)}><option value="">补充给所有角色</option>{participants.map(item => <option value={item.id} key={item.id}>@{item.roleName}</option>)}</select><span>{conversation.stopReason === 'TOKEN_BUDGET' ? '已达到 Token 安全线，请先生成产物' : conversation.status === 'RUNNING' ? '内容将进入当前讨论上下文' : conversation.status === 'READY_TO_SUMMARIZE' ? '补充后可在上方追加讨论' : '发送后需点击继续讨论'}</span></div>
+              <div><select value={target} onChange={event => setTarget(event.target.value)}><option value="">补充给所有角色</option>{participants.map(item => <option value={item.id} key={item.id}>@{item.roleName}</option>)}</select><span>{conversation.status === 'RUNNING' ? '内容将进入当前讨论上下文' : conversation.status === 'READY_TO_SUMMARIZE' ? '补充后可在上方追加讨论' : '发送后需点击继续讨论'}</span></div>
               {mention && <div className="discussion-mention-list" role="listbox" aria-label="选择要追问的角色"><div className="discussion-mention-title">选择要追问的角色</div><div className="discussion-mention-options">{mentionMatches.map(item => <button role="option" aria-selected={target === item.id} onMouseDown={event => { event.preventDefault(); chooseMention(item) }} key={item.id}><span className="agent-avatar">{roleIcon(item.roleName)}</span><span className="discussion-mention-copy"><strong>{item.roleName}</strong><small>{item.rolePrompt}</small></span><em>{item.isLeader ? 'Leader' : '定向追问'}</em></button>)}{!mentionMatches.length && <p>没有匹配的角色</p>}</div></div>}
               <textarea ref={textareaRef} value={text} onChange={event => updateText(event.target.value, event.target.selectionStart)} onKeyDown={event => { if (event.key === 'Escape') setMention(null); if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void send() }} placeholder="输入 @ 可追问某个角色，也可以补充背景或纠正讨论方向…"/>
-              <button className="send" disabled={busy || !text.trim() || conversation.status === 'COMPLETED' || conversation.stopReason === 'TOKEN_BUDGET'} onClick={() => void send()}>{busy ? <LoaderCircle className="spin"/> : <Send/>}</button>
+              <button className="send" disabled={busy || !text.trim() || conversation.status === 'COMPLETED'} onClick={() => void send()}>{busy ? <LoaderCircle className="spin"/> : <Send/>}</button>
             </div>
           </main>
         </div>
@@ -118,7 +118,7 @@ export default function ConversationRoom({ conversation, onBack, onOpenTask }: P
 function CompletionCard({ conversation, turns, busy, onSummarize, onExtend, onOpenResults }: { conversation: Conversation; turns: ConversationTurn[]; busy: boolean; onSummarize(type: ConversationDeliverable['type']): Promise<void>; onExtend(rounds: number): Promise<void>; onOpenResults(): void }): import('react').JSX.Element {
   const recommended = recommendedDeliverable(conversation)
   const totalCost = turns.reduce((sum, turn) => sum + (turn.costUsd ?? 0), 0)
-  const canExtend = conversation.stopReason !== 'TOKEN_BUDGET' && conversation.currentRound < 50
+  const canExtend = conversation.currentRound < 50
   return <section className="conversation-completion-card">
     <div className="completion-icon"><Sparkles/></div>
     <div className="completion-copy"><span>{stopReasonName(conversation.stopReason)}</span><h2>{completionTitle(conversation)}</h2><p>自动讨论已经停止。推荐生成“{deliverableName(recommended)}”，也可以选择其他产物、继续讨论或进入正式任务。</p><small>{conversation.messageCount} 条消息 · {conversation.tokenUsed.toLocaleString()} tokens{totalCost > 0 ? ` · 约 $${totalCost.toFixed(totalCost < 0.1 ? 4 : 2)}` : ''}</small></div>
@@ -134,10 +134,10 @@ function Role({ participant, active, onSelect }: { participant: ConversationPart
 function Turn({ turn, targetName }: { turn: ConversationTurn; targetName?: string }): import('react').JSX.Element {
   let body: import('react').JSX.Element
   if (turn.status === 'RUNNING' || turn.status === 'QUEUED') body = <div className="thinking-output"><LoaderCircle className="spin"/><span>{turn.speakerName} 正在分析上下文并组织观点…</span></div>
-  else if (turn.status === 'FAILED' || turn.status === 'CANCELLED') body = <p className="turn-error">{turn.error || turn.status}</p>
+  else if (turn.status === 'FAILED' || turn.status === 'CANCELLED') body = <p className="turn-error">{turn.error || turnStatusName(turn.status)}</p>
   else body = <div className="markdown"><ReactMarkdown>{turn.content}</ReactMarkdown></div>
   const usageTitle = turn.totalTokens ? `输入 ${turn.inputTokens.toLocaleString()} · 缓存读取 ${turn.cachedInputTokens.toLocaleString()} · 缓存写入 ${turn.cacheCreationInputTokens.toLocaleString()} · 输出 ${turn.outputTokens.toLocaleString()}${turn.costUsd !== null ? ` · 约 $${turn.costUsd.toFixed(4)}` : ''}` : undefined
-  return <article className={`conversation-turn ${turn.speakerType} ${turn.status.toLowerCase()}`}><span className="turn-avatar">{turn.speakerType === 'human' ? 'Y' : turn.speakerType === 'system' ? 'S' : roleIcon(turn.speakerName)}</span><div><header><strong>{turn.speakerName}{targetName && <em> → @{targetName}</em>}</strong><small title={usageTitle}>{turn.status}{turn.totalTokens > 0 ? ` · ${turn.totalTokens.toLocaleString()} tokens` : ''}</small></header>{body}</div></article>
+  return <article className={`conversation-turn ${turn.speakerType} ${turn.status.toLowerCase()}`}><span className="turn-avatar">{turn.speakerType === 'human' ? 'Y' : turn.speakerType === 'system' ? 'S' : roleIcon(turn.speakerName)}</span><div><header><strong>{turn.speakerName}{targetName && <em> → @{targetName}</em>}</strong><small title={usageTitle}>{turnStatusName(turn.status)}{turn.totalTokens > 0 ? ` · ${turn.totalTokens.toLocaleString()} tokens` : ''}</small></header>{body}</div></article>
 }
 
 function MemorySection({ title, content }: { title: string; content: string }): import('react').JSX.Element {
@@ -161,7 +161,7 @@ function ResultPanel({ conversation, deliverables, participants, busy, onSummari
   return <div className="conversation-results">
     <aside><h3>生成讨论产物</h3>{deliverableChoices.map(([type, label, description]) => <button disabled={busy || conversation.status === 'RUNNING' || conversation.status === 'DRAFT'} onClick={() => void onSummarize(type)} key={type}><Sparkles/><span><strong>{label}</strong><small>{description}</small></span></button>)}<h3>已有产物</h3>{deliverables.map(item => <button className={current?.id === item.id ? 'active' : ''} onClick={() => setSelected(item.id)} key={item.id}><FileText/><span><strong>{item.title}</strong><small>{new Date(item.createdAt).toLocaleString()}</small></span></button>)}</aside>
     <main>
-      {current ? <article><header><span className="conversation-status completed">FINAL</span><h2>{current.title}</h2></header><div className="markdown"><ReactMarkdown>{current.content}</ReactMarkdown></div></article> : <div className="result-empty"><FileText/><h2>讨论结束后，把聊天转化为可复用的结果</h2><p>可以生成总结、行动计划、设计 Brief、PRD、决策矩阵、战略议题清单或六帽分析报告。Leader 会保留共识、分歧和少数意见。</p></div>}
+      {current ? <article><header><span className="conversation-status completed">最终结果</span><h2>{current.title}</h2></header><div className="markdown"><ReactMarkdown>{current.content}</ReactMarkdown></div></article> : <div className="result-empty"><FileText/><h2>讨论结束后，把聊天转化为可复用的结果</h2><p>可以生成总结、行动计划、设计 Brief、PRD、决策矩阵、战略议题清单或六帽分析报告。Leader 会保留共识、分歧和少数意见。</p></div>}
       <div className="convert-task"><div><Workflow/><span><strong>转为正式任务</strong><small>携带讨论结论进入 Workspace、Worktree、Evidence 和 Workflow 执行链路。</small></span></div><select value={workspaceId} onChange={event => setWorkspaceId(event.target.value)}><option value="">选择 Git Workspace</option>{snapshot.workspaces.filter(item => item.repoRoot && item.baseCommit).map(item => <option value={item.id} key={item.id}>{item.name} · {item.branch}</option>)}</select><select value={workflowType} onChange={event => setWorkflowType(event.target.value as WorkflowType)}><option value="cross-project">跨项目协同开发</option><option value="incident">线上问题会诊</option><option value="bug-fix">Bug 修复</option><option value="refactor">大型重构</option><option value="release">发布前检查</option></select><button className="primary" disabled={!workspaceId || converting} onClick={() => void convert()}>{converting ? <LoaderCircle className="spin"/> : <Check/>}创建任务</button></div>
     </main>
   </div>
@@ -181,8 +181,10 @@ const recommendedDeliverable = (conversation: Conversation): ConversationDeliver
   return 'SUMMARY'
 }
 const statusName = (status: Conversation['status']): string => ({ DRAFT: '待开始', RUNNING: '讨论中', PAUSED: '已暂停', READY_TO_SUMMARIZE: '待生成结果', COMPLETED: '已完成', FAILED: '运行失败' }[status])
-const stopReasonName = (reason: Conversation['stopReason']): string => ({ MAX_ROUNDS: '已达到轮数', MAX_MESSAGES: '已达到消息数', TOKEN_BUDGET: '已达到 Token 安全线', USER_ENDED: '你已结束讨论', ERROR: '讨论异常停止' }[reason ?? 'USER_ENDED'])
-const completionTitle = (conversation: Conversation): string => conversation.stopReason === 'MAX_ROUNDS' ? `已完成 ${conversation.currentRound} 轮讨论` : conversation.stopReason === 'MAX_MESSAGES' ? `已产生 ${conversation.messageCount} 条消息` : conversation.stopReason === 'TOKEN_BUDGET' ? '本次讨论已停止继续消耗' : '现在可以沉淀讨论结果'
+const roundStatusName = (status: 'RUNNING' | 'COMPLETED' | 'INTERRUPTED'): string => ({ RUNNING: '进行中', COMPLETED: '已完成', INTERRUPTED: '已中断' }[status])
+const turnStatusName = (status: ConversationTurn['status']): string => ({ QUEUED: '排队中', RUNNING: '进行中', COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消' }[status])
+const stopReasonName = (reason: Conversation['stopReason']): string => ({ MAX_ROUNDS: '已达到轮数', MAX_MESSAGES: '已达到消息数', TOKEN_BUDGET: '已达到旧版 Token 安全线', USER_ENDED: '你已结束讨论', ERROR: '讨论异常停止' }[reason ?? 'USER_ENDED'])
+const completionTitle = (conversation: Conversation): string => conversation.stopReason === 'MAX_ROUNDS' ? `已完成 ${conversation.currentRound} 轮讨论` : conversation.stopReason === 'MAX_MESSAGES' ? `已产生 ${conversation.messageCount} 条消息` : conversation.stopReason === 'TOKEN_BUDGET' ? '旧版 Token 限制已取消，可继续追加轮次' : '现在可以沉淀讨论结果'
 const isTerminalSystemTurn = (turn: ConversationTurn): boolean => turn.speakerType === 'system' && /讨论已结束|已达到.*上限|已完成设定轮数/.test(turn.content)
 const modeName = (mode: Conversation['mode']): string => ({ roundtable: '圆桌讨论', brainstorm: '头脑风暴', debate: '正反辩论', consultation: '专家会诊', retreat: '务虚会', 'six-hats': '六顶思考帽' }[mode])
 const roleIcon = (name: string): string => name.trim().slice(0, 1) || '角'
