@@ -86,7 +86,7 @@ export default function ConversationRoom({ conversation, onBack, onOpenTask }: P
         <button className="secondary" onClick={() => void exportFile()}><Download/>导出</button>
       </div>
     </header>
-    <div className="conversation-progress"><Progress label="讨论轮次" value={conversation.currentRound} max={conversation.maxRounds}/></div>
+    <div className="conversation-progress"><Progress label="讨论轮次" value={conversation.currentRound} max={conversation.maxRounds}/><MessageCount value={conversation.messageCount}/></div>
     <div className="conversation-tabs"><button className={tab === 'discussion' ? 'active' : ''} onClick={() => setTab('discussion')}><MessageCircleMore/>讨论现场</button><button className={tab === 'result' ? 'active' : ''} onClick={() => setTab('result')}><FileText/>讨论产物 <em>{deliverables.length}</em></button></div>
     {tab === 'discussion'
       ? <div className="conversation-layout">
@@ -97,7 +97,7 @@ export default function ConversationRoom({ conversation, onBack, onOpenTask }: P
             <div className="memory-card"><MemorySection title="当前共识" content={memory?.consensus.join('\n\n') || '尚未形成'}/><MemorySection title="主要分歧" content={memory?.disagreements.join('\n\n') || '尚未识别'}/><MemorySection title="待回答问题" content={memory?.openQuestions.join('\n\n') || '暂无'}/></div>
           </aside>
           <main className="conversation-feed">
-            <div className="round-timeline">{rounds.map(round => <span className={round.status.toLowerCase()} key={round.id}>第 {round.number} 轮 · {roundStatusName(round.status)}</span>)}</div>
+            <div className="round-timeline">{rounds.map(round => <span className={round.status.toLowerCase()} key={round.id}>第 {round.number} 轮 · {executionStatusName(round.status)}</span>)}</div>
             <div className="conversation-scroll">
               {visibleTurns.map(turn => <Turn key={turn.id} turn={turn} targetName={turn.speakerType === 'human' ? participants.find(item => item.id === turn.participantId)?.roleName : undefined}/>) }
               {!turns.length && <div className="conversation-welcome"><Sparkles/><h2>角色和边界已经就绪</h2><p>点击“开始讨论”，成员会依次表达，后一个角色能够看到前面的发言，Leader 在每轮末负责收敛。</p></div>}
@@ -134,10 +134,10 @@ function Role({ participant, active, onSelect }: { participant: ConversationPart
 function Turn({ turn, targetName }: { turn: ConversationTurn; targetName?: string }): import('react').JSX.Element {
   let body: import('react').JSX.Element
   if (turn.status === 'RUNNING' || turn.status === 'QUEUED') body = <div className="thinking-output"><LoaderCircle className="spin"/><span>{turn.speakerName} 正在分析上下文并组织观点…</span></div>
-  else if (turn.status === 'FAILED' || turn.status === 'CANCELLED') body = <p className="turn-error">{turn.error || turnStatusName(turn.status)}</p>
+  else if (turn.status === 'FAILED' || turn.status === 'CANCELLED') body = <p className="turn-error">{turn.error || executionStatusName(turn.status)}</p>
   else body = <div className="markdown"><ReactMarkdown>{turn.content}</ReactMarkdown></div>
   const usageTitle = turn.totalTokens ? `输入 ${turn.inputTokens.toLocaleString()} · 缓存读取 ${turn.cachedInputTokens.toLocaleString()} · 缓存写入 ${turn.cacheCreationInputTokens.toLocaleString()} · 输出 ${turn.outputTokens.toLocaleString()}${turn.costUsd !== null ? ` · 约 $${turn.costUsd.toFixed(4)}` : ''}` : undefined
-  return <article className={`conversation-turn ${turn.speakerType} ${turn.status.toLowerCase()}`}><span className="turn-avatar">{turn.speakerType === 'human' ? 'Y' : turn.speakerType === 'system' ? 'S' : roleIcon(turn.speakerName)}</span><div><header><strong>{turn.speakerName}{targetName && <em> → @{targetName}</em>}</strong><small title={usageTitle}>{turnStatusName(turn.status)}{turn.totalTokens > 0 ? ` · ${turn.totalTokens.toLocaleString()} tokens` : ''}</small></header>{body}</div></article>
+  return <article className={`conversation-turn ${turn.speakerType} ${turn.status.toLowerCase()}`}><span className="turn-avatar">{turn.speakerType === 'human' ? 'Y' : turn.speakerType === 'system' ? 'S' : roleIcon(turn.speakerName)}</span><div><header><strong>{turn.speakerName}{targetName && <em> → @{targetName}</em>}</strong><small title={usageTitle}>{executionStatusName(turn.status)}{turn.totalTokens > 0 ? ` · ${turn.totalTokens.toLocaleString()} tokens` : ''}</small></header>{body}</div></article>
 }
 
 function MemorySection({ title, content }: { title: string; content: string }): import('react').JSX.Element {
@@ -161,13 +161,14 @@ function ResultPanel({ conversation, deliverables, participants, busy, onSummari
   return <div className="conversation-results">
     <aside><h3>生成讨论产物</h3>{deliverableChoices.map(([type, label, description]) => <button disabled={busy || conversation.status === 'RUNNING' || conversation.status === 'DRAFT'} onClick={() => void onSummarize(type)} key={type}><Sparkles/><span><strong>{label}</strong><small>{description}</small></span></button>)}<h3>已有产物</h3>{deliverables.map(item => <button className={current?.id === item.id ? 'active' : ''} onClick={() => setSelected(item.id)} key={item.id}><FileText/><span><strong>{item.title}</strong><small>{new Date(item.createdAt).toLocaleString()}</small></span></button>)}</aside>
     <main>
-      {current ? <article><header><span className="conversation-status completed">最终结果</span><h2>{current.title}</h2></header><div className="markdown"><ReactMarkdown>{current.content}</ReactMarkdown></div></article> : <div className="result-empty"><FileText/><h2>讨论结束后，把聊天转化为可复用的结果</h2><p>可以生成总结、行动计划、设计 Brief、PRD、决策矩阵、战略议题清单或六帽分析报告。Leader 会保留共识、分歧和少数意见。</p></div>}
+      {current ? <article><header><span className="conversation-status completed">已生成</span><h2>{current.title}</h2></header><div className="markdown"><ReactMarkdown>{current.content}</ReactMarkdown></div></article> : <div className="result-empty"><FileText/><h2>讨论结束后，把聊天转化为可复用的结果</h2><p>可以生成总结、行动计划、设计 Brief、PRD、决策矩阵、战略议题清单或六帽分析报告。Leader 会保留共识、分歧和少数意见。</p></div>}
       <div className="convert-task"><div><Workflow/><span><strong>转为正式任务</strong><small>携带讨论结论进入 Workspace、Worktree、Evidence 和 Workflow 执行链路。</small></span></div><select value={workspaceId} onChange={event => setWorkspaceId(event.target.value)}><option value="">选择 Git Workspace</option>{snapshot.workspaces.filter(item => item.repoRoot && item.baseCommit).map(item => <option value={item.id} key={item.id}>{item.name} · {item.branch}</option>)}</select><select value={workflowType} onChange={event => setWorkflowType(event.target.value as WorkflowType)}><option value="cross-project">跨项目协同开发</option><option value="incident">线上问题会诊</option><option value="bug-fix">Bug 修复</option><option value="refactor">大型重构</option><option value="release">发布前检查</option></select><button className="primary" disabled={!workspaceId || converting} onClick={() => void convert()}>{converting ? <LoaderCircle className="spin"/> : <Check/>}创建任务</button></div>
     </main>
   </div>
 }
 
 function Progress({ label, value, max }: { label: string; value: number; max: number }): import('react').JSX.Element { const percent = Math.min(100, max ? value / max * 100 : 0); return <div><span><strong>{label}</strong><small>{value.toLocaleString()} / {max.toLocaleString()}</small></span><i><b style={{ width: `${percent}%` }}/></i></div> }
+function MessageCount({ value }: { value: number }): import('react').JSX.Element { return <div className="message-count"><span><strong>消息数量</strong><small>{value.toLocaleString()} 条</small></span></div> }
 const deliverableChoices: Array<[ConversationDeliverable['type'], string, string]> = [['SUMMARY', '讨论总结', '保留主要观点、共识与分歧'], ['ACTION_PLAN', '行动计划', '整理目标、步骤和检查节点'], ['DESIGN_BRIEF', 'Design Brief', '沉淀设计方向与创意约束'], ['PRD', '产品需求文档', '形成可进入开发的产品定义'], ['DECISION_MATRIX', '决策矩阵', '比较方案、代价和选择依据'], ['STRATEGIC_AGENDA', '战略议题清单', '沉淀趋势、矛盾、假设与验证方向'], ['SIX_HATS_REPORT', '六帽分析报告', '分离事实、感受、风险、价值与创意']]
 const deliverableName = (type: ConversationDeliverable['type']): string => deliverableChoices.find(item => item[0] === type)?.[1] ?? '讨论总结'
 const recommendedDeliverable = (conversation: Conversation): ConversationDeliverable['type'] => {
@@ -181,10 +182,9 @@ const recommendedDeliverable = (conversation: Conversation): ConversationDeliver
   return 'SUMMARY'
 }
 const statusName = (status: Conversation['status']): string => ({ DRAFT: '待开始', RUNNING: '讨论中', PAUSED: '已暂停', READY_TO_SUMMARIZE: '待生成结果', COMPLETED: '已完成', FAILED: '运行失败' }[status])
-const roundStatusName = (status: 'RUNNING' | 'COMPLETED' | 'INTERRUPTED'): string => ({ RUNNING: '进行中', COMPLETED: '已完成', INTERRUPTED: '已中断' }[status])
-const turnStatusName = (status: ConversationTurn['status']): string => ({ QUEUED: '排队中', RUNNING: '进行中', COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消' }[status])
-const stopReasonName = (reason: Conversation['stopReason']): string => ({ MAX_ROUNDS: '已达到轮数', MAX_MESSAGES: '已达到消息数', TOKEN_BUDGET: '已达到旧版 Token 安全线', USER_ENDED: '你已结束讨论', ERROR: '讨论异常停止' }[reason ?? 'USER_ENDED'])
-const completionTitle = (conversation: Conversation): string => conversation.stopReason === 'MAX_ROUNDS' ? `已完成 ${conversation.currentRound} 轮讨论` : conversation.stopReason === 'MAX_MESSAGES' ? `已产生 ${conversation.messageCount} 条消息` : conversation.stopReason === 'TOKEN_BUDGET' ? '旧版 Token 限制已取消，可继续追加轮次' : '现在可以沉淀讨论结果'
+const stopReasonName = (reason: Conversation['stopReason']): string => ({ MAX_ROUNDS: '已完成设定轮次', USER_ENDED: '你已结束讨论', ERROR: '讨论异常停止' }[reason ?? 'USER_ENDED'])
+const completionTitle = (conversation: Conversation): string => conversation.stopReason === 'MAX_ROUNDS' ? `已完成 ${conversation.currentRound} 轮讨论` : '现在可以沉淀讨论结果'
 const isTerminalSystemTurn = (turn: ConversationTurn): boolean => turn.speakerType === 'system' && /讨论已结束|已达到.*上限|已完成设定轮数/.test(turn.content)
 const modeName = (mode: Conversation['mode']): string => ({ roundtable: '圆桌讨论', brainstorm: '头脑风暴', debate: '正反辩论', consultation: '专家会诊', retreat: '务虚会', 'six-hats': '六顶思考帽' }[mode])
 const roleIcon = (name: string): string => name.trim().slice(0, 1) || '角'
+const executionStatusName = (status: string): string => ({ QUEUED: '排队中', STARTING: '启动中', RUNNING: '进行中', PAUSED: '已暂停', COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消', INTERRUPTED: '已中断' } as Record<string, string>)[status] ?? status

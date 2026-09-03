@@ -8,7 +8,7 @@ export type IssueStatus = 'OPEN' | 'FIXING' | 'RESOLVED' | 'VERIFIED' | 'WONT_FI
 export type PermissionSet = { read: boolean; write: boolean; shell: boolean; git: boolean; network: boolean }
 export type ConversationMode = 'roundtable' | 'brainstorm' | 'debate' | 'consultation' | 'retreat' | 'six-hats'
 export type ConversationStatus = 'DRAFT' | 'RUNNING' | 'PAUSED' | 'READY_TO_SUMMARIZE' | 'COMPLETED' | 'FAILED'
-export type ConversationStopReason = 'MAX_ROUNDS' | 'MAX_MESSAGES' | 'TOKEN_BUDGET' | 'USER_ENDED' | 'ERROR' | null
+export type ConversationStopReason = 'MAX_ROUNDS' | 'USER_ENDED' | 'ERROR' | null
 
 export interface RuntimeInfo {
   type: RuntimeType
@@ -235,8 +235,6 @@ export interface Conversation {
   status: ConversationStatus
   currentRound: number
   maxRounds: number
-  maxMessages: number
-  maxTokens: number
   messageCount: number
   tokenUsed: number
   stopReason: ConversationStopReason
@@ -361,8 +359,6 @@ export interface CreateConversationInput {
   background: string
   mode: ConversationMode
   maxRounds: number
-  maxMessages: number
-  maxTokens: number
   participants: Array<{ agentId: string; roleName: string; rolePrompt: string; isLeader: boolean }>
 }
 

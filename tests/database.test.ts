@@ -67,7 +67,19 @@ describe('transactional local persistence', () => {
     expect(restored.conversationParticipants[0]).toMatchObject({ lastSeenTurnSequence: 1, sessionGeneration: 1 })
     const executor = restored.agents[0]
     const hats = ['蓝帽主持人', '白帽·事实', '红帽·直觉', '黑帽·风险', '黄帽·价值', '绿帽·创意']
-    const conversation = migrated.createConversation({ title: '六帽分析', topic: '是否进入新市场', background: '', mode: 'six-hats', maxRounds: 4, maxMessages: 100, maxTokens: 1000000, participants: hats.map((roleName, index) => ({ agentId: executor.id, roleName, rolePrompt: roleName, isLeader: index === 0 })) })
+    const conversation = migrated.createConversation({ title: '六帽分析', topic: '是否进入新市场', background: '', mode: 'six-hats', maxRounds: 4, participants: hats.map((roleName, index) => ({ agentId: executor.id, roleName, rolePrompt: roleName, isLeader: index === 0 })) })
     expect(migrated.getConversationParticipants(conversation.id)).toHaveLength(6)
+  })
+
+  it('converts legacy message or token stops to round-only completion', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'moxt-round-limit-migration-')); paths.push(directory)
+    const databasePath = join(directory, 'moxt.db'); const legacy = new Sqlite(databasePath)
+    legacy.exec(`
+      CREATE TABLE t_conversation (id TEXT PRIMARY KEY,number INTEGER NOT NULL UNIQUE,title TEXT NOT NULL,topic TEXT NOT NULL,background TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,current_round INTEGER NOT NULL,max_rounds INTEGER NOT NULL,max_messages INTEGER NOT NULL,max_tokens INTEGER NOT NULL,message_count INTEGER NOT NULL,token_used INTEGER NOT NULL,stop_reason TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+      INSERT INTO t_conversation VALUES ('c',1,'title','topic','','roundtable','READY_TO_SUMMARIZE',3,20,200,1000000,16,1049896,'TOKEN_BUDGET','2026-01-01','2026-01-01');
+    `)
+    legacy.close()
+    const restored = new AppDatabase(databasePath).snapshot([]).conversations[0]
+    expect(restored).toMatchObject({ currentRound: 3, maxRounds: 3, stopReason: 'MAX_ROUNDS' })
   })
 })

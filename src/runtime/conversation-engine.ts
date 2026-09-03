@@ -100,13 +100,10 @@ export class ConversationEngine {
   extend(conversationId: string, additionalRounds: number): void {
     const conversation = this.requireConversation(conversationId)
     if (conversation.status !== 'READY_TO_SUMMARIZE') throw new Error('只有已停止的讨论可以追加轮次')
-    if (conversation.stopReason === 'TOKEN_BUDGET' || conversation.tokenUsed >= conversation.maxTokens) throw new Error('讨论已达到 Token 安全上限，请先生成产物或转为正式任务')
     const rounds = Math.min(3, Math.max(1, Math.round(additionalRounds)))
     if (conversation.currentRound >= 50) throw new Error('讨论已达到最高 50 轮')
-    const participantCount = this.db.getConversationParticipants(conversationId).length
     const acceptedRounds = Math.min(rounds, 50 - conversation.currentRound)
-    const extraMessages = Math.max(0, conversation.messageCount + participantCount * acceptedRounds - conversation.maxMessages)
-    this.db.extendConversation(conversationId, acceptedRounds, extraMessages)
+    this.db.extendConversation(conversationId, acceptedRounds)
     this.start(conversationId)
   }
 
@@ -114,7 +111,6 @@ export class ConversationEngine {
     const conversation = this.requireConversation(conversationId)
     if (!content.trim()) throw new Error('消息不能为空')
     if (conversation.status === 'COMPLETED') throw new Error('讨论已经完成')
-    if (conversation.messageCount >= conversation.maxMessages || conversation.tokenUsed >= conversation.maxTokens) throw new Error('讨论已达到消息或 Token 上限')
     if (targetParticipantId && !this.db.getConversationParticipants(conversationId).some(item => item.id === targetParticipantId)) throw new Error('目标角色不属于当前讨论')
     this.db.createConversationTurn({ conversationId, roundId: null, participantId: targetParticipantId ?? null, agentId: null, speakerType: 'human', speakerName: 'You', content: content.trim(), status: 'COMPLETED' })
     const tokens = estimateTokens(content); this.db.updateConversationProgress(conversationId, conversation.currentRound, 1, tokens)
@@ -169,7 +165,7 @@ export class ConversationEngine {
         let successes = 0
         for (const participant of ordered) {
           const latest = this.requireConversation(conversationId)
-          if (latest.status !== 'RUNNING' || this.budgetReached(latest)) break
+          if (latest.status !== 'RUNNING') break
           if (await this.runParticipant(latest, participant, round.id, roundNumber, focus)) successes++
         }
         const latest = this.requireConversation(conversationId)
@@ -280,12 +276,10 @@ export class ConversationEngine {
     return '收敛最有价值的结论、分歧与可执行建议'
   }
 
-  private limitReached(value: Conversation): boolean { return value.currentRound >= value.maxRounds || value.messageCount >= value.maxMessages || value.tokenUsed >= value.maxTokens }
-  private budgetReached(value: Conversation): boolean { return value.messageCount >= value.maxMessages || value.tokenUsed >= value.maxTokens }
+  private limitReached(value: Conversation): boolean { return value.currentRound >= value.maxRounds }
   private readyToSummarize(conversation: Conversation): void {
-    const reason: NonNullable<Conversation['stopReason']> = conversation.tokenUsed >= conversation.maxTokens ? 'TOKEN_BUDGET' : conversation.messageCount >= conversation.maxMessages ? 'MAX_MESSAGES' : 'MAX_ROUNDS'
-    this.db.updateConversationStatus(conversation.id, 'READY_TO_SUMMARIZE', reason)
-    this.systemTurn(conversation.id, reason === 'TOKEN_BUDGET' ? '已达到 Token 安全上限，讨论已停止自动运行。' : reason === 'MAX_MESSAGES' ? '已达到消息数量上限，讨论已停止自动运行。' : '已完成设定轮数，讨论已停止自动运行。')
+    this.db.updateConversationStatus(conversation.id, 'READY_TO_SUMMARIZE', 'MAX_ROUNDS')
+    this.systemTurn(conversation.id, '已完成设定轮数，讨论已停止自动运行。')
     this.changed()
   }
   private systemTurn(conversationId: string, content: string): void { this.db.createConversationTurn({ conversationId, roundId: null, participantId: null, agentId: null, speakerType: 'system', speakerName: 'System', content, status: 'COMPLETED' }) }

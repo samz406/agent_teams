@@ -20,7 +20,7 @@ app.whenReady().then(() => {
     if (message.id === 'smoke') {
       if (!Array.isArray(message.result?.agents) || !Array.isArray(message.result?.tasks) || !Array.isArray(message.result?.conversations)) return finish(new Error('Runtime snapshot contract is incomplete'))
       const agents = message.result.agents.slice(0, 2)
-      child.postMessage({ id: 'create-conversation', request: { type: 'conversation.create', input: { title: 'Runtime smoke discussion', topic: 'Can agents share a bounded context?', background: 'Smoke test', mode: 'roundtable', maxRounds: 1, maxMessages: 4, maxTokens: 4000, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: agent.name, rolePrompt: 'Provide a distinct view', isLeader: index === 0 })) } } })
+      child.postMessage({ id: 'create-conversation', request: { type: 'conversation.create', input: { title: 'Runtime smoke discussion', topic: 'Can agents share a bounded context?', background: 'Smoke test', mode: 'roundtable', maxRounds: 1, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: agent.name, rolePrompt: 'Provide a distinct view', isLeader: index === 0 })) } } })
       return
     }
     if (message.id === 'create-conversation') {

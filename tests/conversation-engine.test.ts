@@ -22,7 +22,7 @@ class FakeExecutor implements ConversationExecutor {
 function setup(maxRounds = 1, mode: Conversation['mode'] = 'roundtable') {
   const root = mkdtempSync(join(tmpdir(), 'moxt-conversation-')); roots.push(root)
   const db = new AppDatabase(join(root, 'db.sqlite')); const agents = db.snapshot([]).agents.slice(0, 2)
-  const conversation = db.createConversation({ title: '管理能力提升', topic: '如何提升管理水平', background: '技术负责人，希望从执行走向管理', mode, maxRounds, maxMessages: 20, maxTokens: 10000, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: index ? '组织教练' : '主持人', rolePrompt: index ? '关注人的动机与反馈' : '收敛共识和分歧', isLeader: index === 0 })) })
+  const conversation = db.createConversation({ title: '管理能力提升', topic: '如何提升管理水平', background: '技术负责人，希望从执行走向管理', mode, maxRounds, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: index ? '组织教练' : '主持人', rolePrompt: index ? '关注人的动机与反馈' : '收敛共识和分歧', isLeader: index === 0 })) })
   const executor = new FakeExecutor(); const engine = new ConversationEngine(db, executor, () => undefined)
   return { db, agents, conversation, executor, engine }
 }
@@ -109,15 +109,16 @@ describe('conversation engine', () => {
   it('requires exactly one leader', () => {
     const root = mkdtempSync(join(tmpdir(), 'moxt-conversation-validation-')); roots.push(root)
     const db = new AppDatabase(join(root, 'db.sqlite')); const agents = db.snapshot([]).agents.slice(0, 2)
-    expect(() => db.createConversation({ title: 'x', topic: 'y', background: '', mode: 'debate', maxRounds: 2, maxMessages: 10, maxTokens: 10000, participants: agents.map(agent => ({ agentId: agent.id, roleName: agent.name, rolePrompt: '', isLeader: false })) })).toThrow('必须且只能有一个 Leader')
+    expect(() => db.createConversation({ title: 'x', topic: 'y', background: '', mode: 'debate', maxRounds: 2, participants: agents.map(agent => ({ agentId: agent.id, roleName: agent.name, rolePrompt: '', isLeader: false })) })).toThrow('必须且只能有一个 Leader')
   })
 
-  it('preserves the expanded 20-round and 200-message defaults', () => {
+  it('uses rounds as the only configured conversation limit', () => {
     const root = mkdtempSync(join(tmpdir(), 'moxt-conversation-budget-')); roots.push(root)
     const db = new AppDatabase(join(root, 'db.sqlite')); const agents = db.snapshot([]).agents.slice(0, 2)
-    const conversation = db.createConversation({ title: 'x', topic: 'y', background: '', mode: 'roundtable', maxRounds: 20, maxMessages: 200, maxTokens: 1_000_000, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: index ? '实践顾问' : '讨论主持人', rolePrompt: '', isLeader: index === 0 })) })
+    const conversation = db.createConversation({ title: 'x', topic: 'y', background: '', mode: 'roundtable', maxRounds: 20, participants: agents.map((agent, index) => ({ agentId: agent.id, roleName: index ? '实践顾问' : '讨论主持人', rolePrompt: '', isLeader: index === 0 })) })
     expect(conversation.maxRounds).toBe(20)
-    expect(conversation.maxMessages).toBe(200)
+    expect(db.getConversation(conversation.id)).not.toHaveProperty('maxMessages')
+    expect(db.getConversation(conversation.id)).not.toHaveProperty('maxTokens')
   })
 })
 
