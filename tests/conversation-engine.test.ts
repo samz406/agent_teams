@@ -93,6 +93,19 @@ describe('conversation engine', () => {
     expect(db.getConversationDeliverables(conversation.id)[0]).toMatchObject({ type: 'STRATEGIC_AGENDA', title: '管理能力提升 · 战略议题清单' })
   })
 
+  it('keeps six-hat perspectives separated and produces a six-hat report', async () => {
+    const { db, conversation, executor, engine } = setup(1, 'six-hats')
+    engine.start(conversation.id)
+    await waitFor(() => db.getConversation(conversation.id)?.status === 'READY_TO_SUMMARIZE')
+    expect(executor.calls[0].prompt).toContain('白帽处理事实')
+    expect(executor.calls[0].prompt).toContain('各帽严格从自己的单一视角')
+    expect(executor.calls[1].prompt).toContain('不要替其他帽子发言')
+    await engine.summarize(conversation.id, 'SIX_HATS_REPORT')
+    expect(executor.calls[2].prompt).toContain('六帽分析报告')
+    expect(executor.calls[2].prompt).toContain('不要混淆事实、感受与判断')
+    expect(db.getConversationDeliverables(conversation.id)[0]).toMatchObject({ type: 'SIX_HATS_REPORT', title: '管理能力提升 · 六帽分析报告' })
+  })
+
   it('requires exactly one leader', () => {
     const root = mkdtempSync(join(tmpdir(), 'moxt-conversation-validation-')); roots.push(root)
     const db = new AppDatabase(join(root, 'db.sqlite')); const agents = db.snapshot([]).agents.slice(0, 2)

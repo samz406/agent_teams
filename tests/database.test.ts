@@ -60,9 +60,14 @@ describe('transactional local persistence', () => {
       INSERT INTO t_conversation_turn VALUES ('t','c','r','p','a','leader','顾问','历史观点','COMPLETED',10,20,NULL,'2026-01-01','2026-01-01');
     `)
     legacy.close()
-    const restored = new AppDatabase(databasePath).snapshot([])
+    const migrated = new AppDatabase(databasePath)
+    const restored = migrated.snapshot([])
     expect(restored.conversations[0].stopReason).toBe('MAX_ROUNDS')
     expect(restored.conversationTurns[0]).toMatchObject({ sequence: 1, totalTokens: 30, content: '历史观点' })
     expect(restored.conversationParticipants[0]).toMatchObject({ lastSeenTurnSequence: 1, sessionGeneration: 1 })
+    const executor = restored.agents[0]
+    const hats = ['蓝帽主持人', '白帽·事实', '红帽·直觉', '黑帽·风险', '黄帽·价值', '绿帽·创意']
+    const conversation = migrated.createConversation({ title: '六帽分析', topic: '是否进入新市场', background: '', mode: 'six-hats', maxRounds: 4, maxMessages: 100, maxTokens: 1000000, participants: hats.map((roleName, index) => ({ agentId: executor.id, roleName, rolePrompt: roleName, isLeader: index === 0 })) })
+    expect(migrated.getConversationParticipants(conversation.id)).toHaveLength(6)
   })
 })

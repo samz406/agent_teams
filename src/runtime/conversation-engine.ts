@@ -94,7 +94,7 @@ export class ConversationEngine {
   async end(conversationId: string): Promise<void> {
     this.requireConversation(conversationId)
     this.db.updateConversationStatus(conversationId, 'READY_TO_SUMMARIZE', 'USER_ENDED'); this.db.interruptActiveConversationRound(conversationId); await this.executor.cancel(conversationId, true)
-    this.systemTurn(conversationId, '讨论已结束。你可以生成总结、行动计划、设计 Brief、PRD、决策矩阵或战略议题清单，也可以将结论转为正式任务。'); this.changed()
+    this.systemTurn(conversationId, '讨论已结束。你可以生成总结、行动计划、设计 Brief、PRD、决策矩阵、战略议题清单或六帽分析报告，也可以将结论转为正式任务。'); this.changed()
   }
 
   extend(conversationId: string, additionalRounds: number): void {
@@ -217,7 +217,9 @@ export class ConversationEngine {
     const leaderInstruction = participant.isLeader
       ? conversation.mode === 'retreat'
         ? '你是务虚会主持人。拉开时间尺度，识别变化、路径依赖、战略矛盾与关键假设；避免过早拆任务，每轮末明确观察、分歧和待验证问题。'
-        : '你是主持人。识别重复、共识、分歧和未回答问题；不要垄断讨论，本轮末给出收敛意见与下一轮建议。'
+        : conversation.mode === 'six-hats'
+          ? '你是蓝帽主持人。管理思考顺序，检查白、红、黑、黄、绿五种视角是否越界或缺失；每轮末综合信息并指定下一轮需要补齐的视角，但不要替其他帽子发言。'
+          : '你是主持人。识别重复、共识、分歧和未回答问题；不要垄断讨论，本轮末给出收敛意见与下一轮建议。'
       : '明确回应其他角色已经提出的观点，贡献新的判断、例子或反驳，禁止只做同义复述。'
     const base = participant.nativeSessionId ? '' : `你正在参加 Moxt 主题讨论。不得操作文件、Shell 或网络；本次只进行思考与表达。\n\n主题：${conversation.topic}\n背景：${conversation.background || '无额外背景'}\n讨论模式：${modeInstruction}\n你的角色：${participant.roleName}\n角色要求：${participant.rolePrompt || '从你的专业视角提供有区分度的判断。'}\n${leaderInstruction}\n\n`
     const memoryUpdate = !participant.nativeSessionId || participant.memoryVersion < (memory?.version ?? 0) ? `共享记忆 v${memory?.version ?? 0}（以此版本覆盖旧记忆）：\n${formatMemory(memory, Boolean(participant.nativeSessionId))}\n\n` : ''
@@ -229,7 +231,9 @@ export class ConversationEngine {
     const turns = this.db.getConversationTurns(conversation.id).filter(item => item.status === 'COMPLETED' && item.content).slice(-40).map(item => `[${item.speakerName}] ${item.content.slice(0, 1800)}`).join('\n\n')
     const formatInstruction = type === 'STRATEGIC_AGENDA'
       ? '输出完整 Markdown，依次写：核心判断、外部变化信号、内部长期矛盾、关键假设与不同情景、战略议题清单、需要验证的问题，以及明确暂不进入的执行细节。不要把务虚会强行改写成任务分解。'
-      : '输出完整 Markdown。先给核心结论，再写主要观点、关键分歧、用户需要做的选择和下一步行动；保留有价值的少数意见。'
+      : type === 'SIX_HATS_REPORT'
+        ? '输出完整 Markdown，分别整理：白帽事实与信息缺口、红帽直觉与利益相关者感受、黑帽风险、黄帽价值、绿帽备选创意，最后由蓝帽给出综合判断、成立条件、仍需验证的信息和下一步。不要混淆事实、感受与判断。'
+        : '输出完整 Markdown。先给核心结论，再写主要观点、关键分歧、用户需要做的选择和下一步行动；保留有价值的少数意见。'
     return `你是本次讨论的 Leader。基于真实聊天记录生成“${deliverableLabel(type)}”，不得杜撰讨论中没有出现的事实。主题：${conversation.topic}\n背景：${conversation.background}\n\n共享记忆：\n${formatMemory(memory)}\n\n聊天记录：\n${turns}\n\n${formatInstruction}`
   }
 
@@ -259,6 +263,17 @@ export class ConversationEngine {
             : '收敛战略议题、关键判断与待验证假设，并明确哪些执行细节暂不讨论'
       return memory?.openQuestions[0] ? `${stage}；同时回应待确认问题：${memory.openQuestions[0]}` : stage
     }
+    if (conversation.mode === 'six-hats') {
+      const progress = conversation.currentRound / Math.max(1, conversation.maxRounds)
+      const stage = progress < 0.25
+        ? '蓝帽明确问题、目标和判断标准；各帽严格从自己的单一视角给出第一轮观察'
+        : progress < 0.5
+          ? '重点补齐白帽事实与证据缺口、红帽直觉和利益相关者感受，禁止把推测冒充事实'
+          : progress < 0.75
+            ? '交叉比较黑帽风险与黄帽价值，并由绿帽提出能改变约束或兼顾双方的新选项'
+            : '由蓝帽综合六种视角，形成条件化判断、备选方案、待验证信息与下一步'
+      return memory?.openQuestions[0] ? `${stage}；同时处理待确认问题：${memory.openQuestions[0]}` : stage
+    }
     if (memory?.openQuestions.length) return memory.openQuestions[0]
     if (conversation.currentRound === 0) return '独立给出你的核心判断、依据和一个具体例子'
     if (conversation.currentRound === 1) return '回应其他角色，指出你认同、质疑或需要补充的部分'
@@ -282,9 +297,10 @@ const modeInstructions: Record<Conversation['mode'], string> = {
   brainstorm: '头脑风暴：先发散产生差异化想法，再组合、筛选，不要过早否定。',
   debate: '正反辩论：主动暴露假设、反例、代价和二阶影响，以论证而不是立场取胜。',
   consultation: '专家会诊：给出假设、依据、风险、建议以及仍需确认的信息。',
-  retreat: '务虚会：拉开时间尺度，先观察变化与反思现状，暴露路径依赖和关键假设；避免过早讨论具体执行，最终收敛为战略议题与待验证方向。'
+  retreat: '务虚会：拉开时间尺度，先观察变化与反思现状，暴露路径依赖和关键假设；避免过早讨论具体执行，最终收敛为战略议题与待验证方向。',
+  'six-hats': '六顶思考帽：蓝帽管理流程，白帽处理事实，红帽表达直觉，黑帽审查风险，黄帽寻找价值，绿帽创造选项；各角色不得越过自己的思考边界。'
 }
-const deliverableLabel = (type: ConversationDeliverable['type']): string => ({ SUMMARY: '讨论总结', ACTION_PLAN: '行动计划', DESIGN_BRIEF: 'Design Brief', PRD: '产品需求文档', DECISION_MATRIX: '决策矩阵', STRATEGIC_AGENDA: '战略议题清单', MARKDOWN: '主题文档' }[type])
+const deliverableLabel = (type: ConversationDeliverable['type']): string => ({ SUMMARY: '讨论总结', ACTION_PLAN: '行动计划', DESIGN_BRIEF: 'Design Brief', PRD: '产品需求文档', DECISION_MATRIX: '决策矩阵', STRATEGIC_AGENDA: '战略议题清单', SIX_HATS_REPORT: '六帽分析报告', MARKDOWN: '主题文档' }[type])
 const estimateTokens = (value: string): number => Math.max(1, Math.ceil(value.length / 3))
 const totalTokens = (result: ChatResult): number => result.totalTokens ?? result.inputTokens + result.outputTokens
 const usagePatch = (result: ChatResult): Pick<ConversationTurn, 'inputTokens' | 'outputTokens' | 'cachedInputTokens' | 'cacheCreationInputTokens' | 'reasoningOutputTokens' | 'totalTokens' | 'costUsd' | 'model'> => ({ inputTokens: result.inputTokens, outputTokens: result.outputTokens, cachedInputTokens: result.cachedInputTokens ?? 0, cacheCreationInputTokens: result.cacheCreationInputTokens ?? 0, reasoningOutputTokens: result.reasoningOutputTokens ?? 0, totalTokens: totalTokens(result), costUsd: result.costUsd ?? null, model: result.model ?? null })

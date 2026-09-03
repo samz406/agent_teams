@@ -116,8 +116,7 @@ export class AppDatabase {
         id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, agent_id TEXT NOT NULL, role_name TEXT NOT NULL,
         role_prompt TEXT NOT NULL, speaking_order INTEGER NOT NULL, is_leader INTEGER NOT NULL,
         enabled INTEGER NOT NULL, native_session_id TEXT, last_seen_turn_sequence INTEGER NOT NULL DEFAULT 0,
-        memory_version INTEGER NOT NULL DEFAULT 0, session_generation INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
-        UNIQUE(conversation_id, agent_id)
+        memory_version INTEGER NOT NULL DEFAULT 0, session_generation INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS t_conversation_round (
         id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, number INTEGER NOT NULL, focus TEXT NOT NULL,
@@ -157,6 +156,7 @@ export class AppDatabase {
     this.ensureColumn('t_conversation_participant', 'last_seen_turn_sequence', 'INTEGER NOT NULL DEFAULT 0')
     this.ensureColumn('t_conversation_participant', 'memory_version', 'INTEGER NOT NULL DEFAULT 0')
     this.ensureColumn('t_conversation_participant', 'session_generation', 'INTEGER NOT NULL DEFAULT 1')
+    this.allowConversationAgentReuse()
     this.ensureColumn('t_conversation_turn', 'sequence', 'INTEGER NOT NULL DEFAULT 0')
     this.ensureColumn('t_conversation_turn', 'cached_input_tokens', 'INTEGER NOT NULL DEFAULT 0')
     this.ensureColumn('t_conversation_turn', 'cache_creation_input_tokens', 'INTEGER NOT NULL DEFAULT 0')
@@ -176,12 +176,34 @@ export class AppDatabase {
       SET stop_reason=CASE WHEN token_used>=max_tokens THEN 'TOKEN_BUDGET' WHEN message_count>=max_messages THEN 'MAX_MESSAGES' WHEN current_round>=max_rounds THEN 'MAX_ROUNDS' ELSE 'USER_ENDED' END
       WHERE status='READY_TO_SUMMARIZE' AND stop_reason IS NULL;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turn_sequence ON t_conversation_turn(conversation_id,sequence);
+      CREATE INDEX IF NOT EXISTS idx_conversation_participant_agent ON t_conversation_participant(conversation_id,agent_id);
     `)
   }
 
   private ensureColumn(table: string, column: string, type: string): void {
     const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
     if (!columns.some(item => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+  }
+
+  private allowConversationAgentReuse(): void {
+    const row = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='t_conversation_participant'").get() as { sql: string } | undefined
+    if (!row || !/UNIQUE\s*\(\s*conversation_id\s*,\s*agent_id\s*\)/i.test(row.sql)) return
+    const tx = this.db.transaction(() => {
+      this.db.exec(`
+        CREATE TABLE t_conversation_participant_next (
+          id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, agent_id TEXT NOT NULL, role_name TEXT NOT NULL,
+          role_prompt TEXT NOT NULL, speaking_order INTEGER NOT NULL, is_leader INTEGER NOT NULL,
+          enabled INTEGER NOT NULL, native_session_id TEXT, last_seen_turn_sequence INTEGER NOT NULL DEFAULT 0,
+          memory_version INTEGER NOT NULL DEFAULT 0, session_generation INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+        );
+        INSERT INTO t_conversation_participant_next
+          SELECT id,conversation_id,agent_id,role_name,role_prompt,speaking_order,is_leader,enabled,native_session_id,last_seen_turn_sequence,memory_version,session_generation,created_at
+          FROM t_conversation_participant;
+        DROP TABLE t_conversation_participant;
+        ALTER TABLE t_conversation_participant_next RENAME TO t_conversation_participant;
+      `)
+    })
+    tx()
   }
 
   private recoverInterruptedRuns(): void {
@@ -415,7 +437,7 @@ export class AppDatabase {
     const leaders = input.participants.filter(item => item.isLeader)
     if (input.participants.length < 2 || input.participants.length > 6) throw new Error('主题讨论需要 2～6 个参与角色')
     if (leaders.length !== 1) throw new Error('主题讨论必须且只能有一个 Leader')
-    if (new Set(input.participants.map(item => item.agentId)).size !== input.participants.length) throw new Error('同一个 Agent 不能重复加入讨论')
+    if (new Set(input.participants.map(item => item.roleName.trim().toLocaleLowerCase())).size !== input.participants.length) throw new Error('同一讨论中的角色名称不能重复')
     const number = ((this.db.prepare('SELECT MAX(number) AS n FROM t_conversation').get() as { n: number | null }).n ?? 0) + 1
     const time = now()
     const value: Conversation = { id: randomUUID(), number, title: input.title.trim(), topic: input.topic.trim(), background: input.background.trim(), mode: input.mode, status: 'DRAFT', currentRound: 0, maxRounds: clamp(input.maxRounds, 1, 50), maxMessages: clamp(input.maxMessages, input.participants.length, 1000), maxTokens: clamp(input.maxTokens, 1000, 1_000_000), messageCount: 0, tokenUsed: 0, stopReason: null, createdAt: time, updatedAt: time }

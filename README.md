@@ -14,7 +14,7 @@ Agent Teams 是一个面向真实软件研发的本地 AI Team Runtime：人通�
 - Leader Engine 驱动 `ASSIGNED → RUNNING → RUN_COMPLETED → VERIFYING → ACCEPTED/REWORK` 状态机；Exit 0 不是验收，缺少阶段要求的 Runtime/Diff/Test Evidence 会生成 Blocking Issue，阻止 Workflow 推进。
 - 一个 Change 可挂载多个 Workspace、Agent 和 Workstream；Agent 的 `team-actions` 只允许向当前 Session Team 委派，并创建真实 Task、Run 与 Handoff。
 - 内置五种责任流；AUTO 阶段仅在全部 Task 验收且无 Blocking Issue 时推进，人工 Gate 仍要求批准 Artifact，Bug Fix 最终验证强制由非实现 Agent 完成。
-- 独立“多人聊天”模式支持圆桌、头脑风暴、正反辩论、专家会诊和务虚会：系统按模式生成差异化角色模板，Leader 轮末主持，角色共享上下文；聊天可暂停、恢复、通过 @角色 定向追问、生成 Markdown 产物并一键转为正式任务。
+- 独立“多人聊天”模式支持圆桌、头脑风暴、正反辩论、专家会诊、务虚会和六顶思考帽：系统按模式生成差异化角色模板，Leader 轮末主持，角色共享上下文；聊天可暂停、恢复、通过 @角色 定向追问、生成 Markdown 产物并一键转为正式任务。
 - 工作台、新建任务五步流程、Team Chat、实时 Agent Inspector、Session/Run 历史、Workflow 阶段与模板详情、Artifact 版本与审批、可编辑 Agent 团队、Runtime 设置等核心页面。
 
 ## 本地运行
@@ -28,7 +28,7 @@ npm run dev
 
 首次打开后：在“新建任务”中选择协作模式，填写目标，挂载一个或多个本地项目目录并选择 Agent。创建成功后 Agent Teams 会立即建立首个 Task 并启动 Leader Runtime，无需再发送一条消息才能开始执行。CLI 使用本机已有登录态，应用不保存 API Key。
 
-纯思考场景可从“多人聊天”进入，不要求 Workspace。创建聊天时设置主题、背景、讨论模式、最大轮数和消息数；系统会按圆桌、头脑风暴、辩论、会诊或务虚会自动生成本次角色模板，再映射到已配置的真实 Runtime Agent，避免把 Code Agent 等执行身份直接暴露为讨论角色。务虚会按“外部变化—内部反思—未来情景—战略议题”推进，并默认生成战略议题清单。聊天支持 Markdown 共享记忆、输入框 @角色 定向追问和独立滚动；结束后可由 Leader 生成总结、行动计划、Design Brief、PRD、决策矩阵或战略议题清单，也可以选择 Workspace 将结论转换为现有 Evidence 驱动任务。
+纯思考场景可从“多人聊天”进入，不要求 Workspace。创建聊天时设置主题、背景、讨论模式、最大轮数和消息数；系统会按圆桌、头脑风暴、辩论、会诊、务虚会或六顶思考帽自动生成本次角色模板，再映射到已配置的真实 Runtime Agent，避免把 Code Agent 等执行身份直接暴露为讨论角色。每个讨论角色拥有独立 Session；六顶思考帽即使复用底层 Runtime 配置，也会完整保留蓝、白、红、黑、黄、绿六个相互隔离的角色。务虚会按“外部变化—内部反思—未来情景—战略议题”推进；六顶思考帽按“定义问题—分帽审视—交叉校验—综合决策”推进。聊天支持 Markdown 共享记忆、输入框 @角色 定向追问和独立滚动；结束后可由 Leader 生成总结、行动计划、Design Brief、PRD、决策矩阵、战略议题清单或六帽分析报告，也可以选择 Workspace 将结论转换为现有 Evidence 驱动任务。
 
 ## 验证与打包
 

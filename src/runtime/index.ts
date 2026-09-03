@@ -89,11 +89,12 @@ function convertConversation(conversationId: string, input: Extract<RuntimeReque
   const workspace = db.getWorkspace(input.workspaceId)
   if (!conversation || !workspace) throw new Error('讨论或目标 Workspace 不存在')
   const participants = db.getConversationParticipants(conversationId)
+  const agentIds = [...new Set(input.agentIds)]
   const allowed = new Set(participants.map(item => item.agentId))
-  if (!input.agentIds.length || input.agentIds.some(id => !allowed.has(id))) throw new Error('转任务只能选择当前讨论中的 Agent')
+  if (!agentIds.length || agentIds.some(id => !allowed.has(id))) throw new Error('转任务只能选择当前讨论中的 Agent')
   if (!workspace.repoRoot || !workspace.baseCommit) throw new Error('转为正式任务需要选择 Git Workspace，以便写 Agent 使用独立 Worktree')
   const deliverable = db.getConversationDeliverables(conversationId)[0]
-  const change = db.createChange({ title: conversation.title, description: deliverable?.content || conversationEngine.exportMarkdown(conversationId).content, workflowType: input.workflowType, priority: input.priority, workspaceIds: [workspace.id], agentIds: input.agentIds, agentBindings: input.agentIds.map(agentId => { const agent = db.getAgent(agentId); if (!agent) throw new Error(`Agent ${agentId} 不存在`); return { agentId, workspaceId: workspace.id, permissions: agent.permissions } }), tags: ['from-discussion'] })
+  const change = db.createChange({ title: conversation.title, description: deliverable?.content || conversationEngine.exportMarkdown(conversationId).content, workflowType: input.workflowType, priority: input.priority, workspaceIds: [workspace.id], agentIds, agentBindings: agentIds.map(agentId => { const agent = db.getAgent(agentId); if (!agent) throw new Error(`Agent ${agentId} 不存在`); return { agentId, workspaceId: workspace.id, permissions: agent.permissions } }), tags: ['from-discussion'] })
   const source = deliverable ?? db.createConversationDeliverable(conversationId, 'MARKDOWN', `${conversation.title} · 讨论记录`, conversationEngine.exportMarkdown(conversationId).content)
   db.markConversationConverted(source.id, change.id); changed(); return change
 }

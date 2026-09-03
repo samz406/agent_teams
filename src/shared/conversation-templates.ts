@@ -36,14 +36,25 @@ export const CONVERSATION_ROLE_TEMPLATES: Record<ConversationMode, ConversationR
     { name: '外部环境观察者', prompt: '从行业、技术、用户、竞争和政策变化中识别趋势、机会、威胁及其时间窗口。', isLeader: false },
     { name: '组织反思者', prompt: '审视现有目标、资源配置、能力结构、协作方式与路径依赖，指出制约长期发展的根本矛盾。', isLeader: false },
     { name: '未来推演者', prompt: '构造乐观、基准和压力情景，检验关键假设、二阶影响与不行动的代价，提出需要验证的方向。', isLeader: false }
+  ],
+  'six-hats': [
+    { name: '蓝帽主持人', prompt: '管理思考流程，定义问题与判断标准，确保六种视角不混淆，最后综合结论、选择与下一步。', isLeader: true },
+    { name: '白帽·事实', prompt: '只处理事实、数据、已知信息和证据缺口；明确区分事实、推测与仍需验证的信息。', isLeader: false },
+    { name: '红帽·直觉', prompt: '表达直觉、情绪、偏好和担忧，不强行为感受寻找理性证明，并指出相关人的可能反应。', isLeader: false },
+    { name: '黑帽·风险', prompt: '审查失败条件、约束、成本、副作用和不可逆后果，说明风险发生的机制而非泛泛否定。', isLeader: false },
+    { name: '黄帽·价值', prompt: '寻找收益、机会、优势和可行条件，说明价值如何产生以及在哪些前提下成立。', isLeader: false },
+    { name: '绿帽·创意', prompt: '打破既有假设，提出替代方案、组合方案和低成本试验，不重复已有选项。', isLeader: false }
   ]
 }
 
 export function buildConversationParticipants(mode: ConversationMode, agents: Agent[]): CreateConversationInput['participants'] {
   const usable = agents.filter(agent => agent.status !== 'ERROR' && agent.status !== 'OFFLINE')
   const executors = usable.length >= 2 ? usable : agents
-  return CONVERSATION_ROLE_TEMPLATES[mode].slice(0, Math.min(4, executors.length)).map((template, index) => ({
-    agentId: executors[index].id,
+  const templates = CONVERSATION_ROLE_TEMPLATES[mode]
+  const roleCount = mode === 'six-hats' ? templates.length : Math.min(4, executors.length)
+  if (!executors.length) return []
+  return templates.slice(0, roleCount).map((template, index) => ({
+    agentId: executors[index % executors.length].id,
     roleName: template.name,
     rolePrompt: template.prompt,
     isLeader: template.isLeader

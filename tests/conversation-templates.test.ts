@@ -20,10 +20,11 @@ const agents = ['a', 'b', 'c', 'd'].map((id, index) => ({
 })) as Agent[]
 
 describe('conversation role templates', () => {
-  it.each(['roundtable', 'brainstorm', 'debate', 'consultation', 'retreat'] as ConversationMode[])('creates distinct mode roles for %s', mode => {
+  it.each(['roundtable', 'brainstorm', 'debate', 'consultation', 'retreat', 'six-hats'] as ConversationMode[])('creates distinct mode roles for %s', mode => {
     const participants = buildConversationParticipants(mode, agents)
-    expect(participants).toHaveLength(4)
+    expect(participants).toHaveLength(mode === 'six-hats' ? 6 : 4)
     expect(new Set(participants.map(item => item.agentId)).size).toBe(4)
+    expect(new Set(participants.map(item => item.roleName)).size).toBe(participants.length)
     expect(participants.filter(item => item.isLeader)).toHaveLength(1)
     expect(participants.map(item => item.roleName)).toEqual(CONVERSATION_ROLE_TEMPLATES[mode].map(item => item.name))
   })
@@ -33,6 +34,8 @@ describe('conversation role templates', () => {
     expect(buildConversationParticipants('brainstorm', agents)[1].roleName).toBe('用户洞察者')
     expect(buildConversationParticipants('debate', agents)[2].roleName).toBe('反对方')
     expect(buildConversationParticipants('retreat', agents).map(item => item.roleName)).toEqual(['务虚会主持人', '外部环境观察者', '组织反思者', '未来推演者'])
+    expect(buildConversationParticipants('six-hats', agents).map(item => item.roleName)).toEqual(['蓝帽主持人', '白帽·事实', '红帽·直觉', '黑帽·风险', '黄帽·价值', '绿帽·创意'])
+    expect(buildConversationParticipants('six-hats', agents).map(item => item.agentId)).toEqual(['a', 'b', 'c', 'd', 'a', 'b'])
   })
 
   it('detects an active @ query at the cursor', () => {

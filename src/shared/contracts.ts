@@ -6,7 +6,7 @@ export type ArtifactStatus = 'DRAFT' | 'REVIEW' | 'APPROVED' | 'DEPRECATED'
 export type TaskStatus = 'ASSIGNED' | 'QUEUED' | 'RUNNING' | 'RUN_COMPLETED' | 'VERIFYING' | 'ACCEPTED' | 'REWORK' | 'BLOCKED' | 'CANCELLED'
 export type IssueStatus = 'OPEN' | 'FIXING' | 'RESOLVED' | 'VERIFIED' | 'WONT_FIX'
 export type PermissionSet = { read: boolean; write: boolean; shell: boolean; git: boolean; network: boolean }
-export type ConversationMode = 'roundtable' | 'brainstorm' | 'debate' | 'consultation' | 'retreat'
+export type ConversationMode = 'roundtable' | 'brainstorm' | 'debate' | 'consultation' | 'retreat' | 'six-hats'
 export type ConversationStatus = 'DRAFT' | 'RUNNING' | 'PAUSED' | 'READY_TO_SUMMARIZE' | 'COMPLETED' | 'FAILED'
 export type ConversationStopReason = 'MAX_ROUNDS' | 'MAX_MESSAGES' | 'TOKEN_BUDGET' | 'USER_ENDED' | 'ERROR' | null
 
@@ -309,7 +309,7 @@ export interface ConversationMemory {
 export interface ConversationDeliverable {
   id: string
   conversationId: string
-  type: 'SUMMARY' | 'ACTION_PLAN' | 'DESIGN_BRIEF' | 'PRD' | 'DECISION_MATRIX' | 'STRATEGIC_AGENDA' | 'MARKDOWN'
+  type: 'SUMMARY' | 'ACTION_PLAN' | 'DESIGN_BRIEF' | 'PRD' | 'DECISION_MATRIX' | 'STRATEGIC_AGENDA' | 'SIX_HATS_REPORT' | 'MARKDOWN'
   title: string
   content: string
   status: 'DRAFT' | 'FINAL'
