@@ -126,6 +126,69 @@
   flex-wrap: wrap;
 }
 
+.task-center-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.task-center-metrics > div {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.task-center-metrics svg {
+  color: var(--blue);
+}
+.task-center-metrics span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.task-center-metrics strong {
+  font-size: 22px;
+}
+.task-center-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 14px 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.task-center-meta > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.task-center-meta svg {
+  width: 14px;
+  height: 14px;
+}
+.text-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  margin: 0 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
+  .task-center-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .discussions-page {
   overflow: auto;
 }
@@ -1801,7 +1864,28 @@
   overflow: auto;
   scrollbar-width: none;
 }
-.notification-row{width:100%;border:0;border-bottom:1px solid var(--border);background:#fff;text-align:left;color:inherit}.notification-row span,.notification-row strong,.notification-row small{display:block}.notification-row small{color:var(--muted);margin-top:4px}.notification-row em{font-style:normal;font-size:9px;color:var(--blue)}
+.notification-row {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  text-align: left;
+  color: inherit;
+}
+.notification-row span,
+.notification-row strong,
+.notification-row small {
+  display: block;
+}
+.notification-row small {
+  color: var(--muted);
+  margin-top: 4px;
+}
+.notification-row em {
+  font-style: normal;
+  font-size: 9px;
+  color: var(--blue);
+}
 .long-term-layout {
   display: grid;
   grid-template-columns: 230px 1fr;

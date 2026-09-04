@@ -3,6 +3,7 @@ import {
   BookOpenCheck,
   BrainCircuit,
   Check,
+  Cog,
   Plus,
   Save,
   ShieldAlert,
@@ -23,7 +24,11 @@ const split = (value: string): string[] =>
     .map((item) => item.trim())
     .filter(Boolean);
 
-export default function LongTermAgents(): import("react").JSX.Element {
+export default function LongTermAgents({
+  onManageAgents,
+}: {
+  onManageAgents(): void;
+}): import("react").JSX.Element {
   const { snapshot, notify } = useAppStore();
   const [agentId, setAgentId] = useState(snapshot.agents[0]?.id ?? "");
   const [tab, setTab] = useState<"profile" | "memory" | "skill">("profile");
@@ -42,6 +47,10 @@ export default function LongTermAgents(): import("react").JSX.Element {
           <h1>数字员工</h1>
           <p>以长期岗位为中心管理职责、分层记忆与经过验证的工作方法。</p>
         </div>
+        <button className="secondary" onClick={onManageAgents}>
+          <Cog />
+          Agent 与 Runtime 配置
+        </button>
       </header>
       <div className="long-term-layout">
         <aside className="employee-list">

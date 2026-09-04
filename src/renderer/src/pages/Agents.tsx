@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bot, Edit3, Plus, ShieldCheck, X } from "lucide-react";
+import { ArrowLeft, Bot, Edit3, Plus, ShieldCheck, X } from "lucide-react";
 import type { Agent, RuntimeType } from "../../../shared/contracts";
 import { errorText, useAppStore } from "../store";
 import { statusLabel } from "../status-labels";
@@ -31,7 +31,11 @@ const blankForm = (): AgentForm => ({
   network: true,
 });
 
-export default function Agents(): import("react").JSX.Element {
+export default function Agents({
+  onBack,
+}: {
+  onBack(): void;
+}): import("react").JSX.Element {
   const { snapshot, notify } = useAppStore();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Agent | null>(null);
@@ -103,10 +107,11 @@ export default function Agents(): import("react").JSX.Element {
     <section className="page">
       <header className="page-header">
         <div>
-          <h1>Agent 团队</h1>
-          <p>
-            Agent 是长期责任角色；可随时调整角色、Runtime、质量标准与默认权限。
-          </p>
+          <button className="text-back" onClick={onBack}>
+            <ArrowLeft /> 返回数字员工
+          </button>
+          <h1>Agent 与 Runtime 配置</h1>
+          <p>管理数字员工使用的底层 Runtime、执行命令、质量标准和默认权限。</p>
         </div>
         <button className="primary" onClick={createNew}>
           <Plus />
