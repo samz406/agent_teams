@@ -1,5 +1,7 @@
-import type { DesktopApi } from '../shared/contracts'
+import type { DesktopApi } from "../shared/contracts";
 
 declare global {
-  interface Window { moxt: DesktopApi }
+  interface Window {
+    moxt: DesktopApi;
+  }
 }

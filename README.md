@@ -15,6 +15,11 @@ Agent Teams 是一个面向真实软件研发的本地 AI Team Runtime：人通�
 - 一个 Change 可挂载多个 Workspace、Agent 和 Workstream；Agent 的 `team-actions` 只允许向当前 Session Team 委派，并创建真实 Task、Run 与 Handoff。
 - 内置五种责任流；AUTO 阶段仅在全部 Task 验收且无 Blocking Issue 时推进，人工 Gate 仍要求批准 Artifact，Bug Fix 最终验证强制由非实现 Agent 完成。
 - 独立“多人聊天”模式支持圆桌、头脑风暴、正反辩论、专家会诊、务虚会和六顶思考帽：系统按模式生成差异化角色模板，Leader 轮末主持，角色共享上下文；聊天可暂停、恢复、通过 @角色 定向追问、生成 Markdown 产物并一键转为正式任务。
+- 新增“数字员工”主线：每个 Runtime Agent 都有独立、可版本化的长期岗位档案，支持 Role/Project/Episode/Workflow 四层记忆、候选审批、来源追溯、冲突保护和不可信数据隔离。
+- Skill 以锁定版本注入工作单，包含 Markdown 步骤、输入输出 Schema、能力与 Evidence 声明；Skill 只检查权限，不会自动放宽 Agent 权限。
+- 非研发工作使用独立 WorkOrder 状态机和 Session，不包装成隐藏 Change；Runtime Exit 0 后仍需通过来源、数据新鲜度、输出结构和本地交付 Evidence 才能标记为完成，并自动沉淀 Episode Memory。
+- 定时计划使用 IANA 时区、Cron、确定性模板变量和幂等键创建 WorkOrder；关闭窗口后 Runtime 在系统托盘继续驻留，失败、阻塞和错过执行会进入应用内通知，窗口隐藏时同时使用系统通知。
+- 全局 RuntimeQueue 增加交互、定时、后台三种优先级与防饥饿机制，为人工操作保留执行槽位。
 - 工作台、新建任务五步流程、Team Chat、实时 Agent Inspector、Session/Run 历史、Workflow 阶段与模板详情、Artifact 版本与审批、可编辑 Agent 团队、Runtime 设置等核心页面。
 
 ## 本地运行
@@ -29,6 +34,8 @@ npm run dev
 首次打开后：在“新建任务”中选择协作模式，填写目标，挂载一个或多个本地项目目录并选择 Agent。创建成功后 Agent Teams 会立即建立首个 Task 并启动 Leader Runtime，无需再发送一条消息才能开始执行。CLI 使用本机已有登录态，应用不保存 API Key。
 
 纯思考场景可从“多人聊天”进入，不要求 Workspace。创建聊天时设置主题、背景、讨论模式和最大轮数；轮次是唯一的自动停止条件，消息数与 Token 仅作为用量记录，不参与限制。系统会按圆桌、头脑风暴、辩论、会诊、务虚会或六顶思考帽自动生成本次角色模板，再映射到已配置的真实 Runtime Agent，避免把 Code Agent 等执行身份直接暴露为讨论角色。每个讨论角色拥有独立 Session；六顶思考帽即使复用底层 Runtime 配置，也会完整保留蓝、白、红、黑、黄、绿六个相互隔离的角色。务虚会按“外部变化—内部反思—未来情景—战略议题”推进；六顶思考帽按“定义问题—分帽审视—交叉校验—综合决策”推进。聊天支持 Markdown 共享记忆、输入框 @角色 定向追问和独立滚动；结束后可由 Leader 生成总结、行动计划、Design Brief、PRD、决策矩阵、战略议题清单或六帽分析报告，也可以选择 Workspace 将结论转换为现有 Evidence 驱动任务。
+
+长期工作从“数字员工”开始：先补全岗位八段式说明并启用岗位，再确认需要长期生效的记忆、创建 Skill，随后在“工作单”中运行一次真实任务。任务稳定后可从“定时计划”创建 Cron；计划首次默认停用，应先执行“立即测试运行”，检查负责人、权限、来源、输出结构和交付物后再启用。
 
 ## 验证与打包
 
@@ -59,4 +66,4 @@ Runtime 会查找当前 Agent Pool 中的目标责任角色，并为它创建新
 
 ## 工程边界
 
-当前仓库已实现 V0.1 的独立 Runtime、Adapter/Resume/Queue、结构化协作模型、权限与 Worktree、Evidence 驱动 Leader 主链路。发布级收尾仍包括 Windows ConPTY 交互终端、Transcript 文件分片、Worktree 生命周期清理、签名公证、自动更新，以及使用已登录真实 CLI 完成五类场景的跨平台 E2E。未执行的真实 E2E 不会标记为已验收；详细状态见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
+当前仓库已实现独立 Runtime、Adapter/Resume/优先级队列、结构化协作模型、权限与 Worktree、Evidence 驱动 Leader，以及长期岗位 → 记忆/Skill → WorkOrder → Schedule 的首个垂直闭环。Skill 的真实测试用例编排、ApprovalPolicy/外部连接器、向量检索、云端 Executor、每日成本急停、完整 Snapshot 分页和跨平台真实 CLI E2E 仍属于后续迭代；首版明确拒绝 REPLACE 调度和外部发送，不会把未验收能力标记为成功。详细状态见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
