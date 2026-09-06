@@ -65,7 +65,7 @@ svg {
   line-height: 1;
 }
 .logo span {
-  font-size: 10px;
+  font-size: 12px;
   color: #9aabbd;
 }
 .brand-mark {
@@ -108,7 +108,7 @@ svg {
 }
 .nav-item em {
   font-style: normal;
-  font-size: 11px;
+  font-size: 12px;
   background: #296fe8;
   color: #fff;
   border-radius: 10px;
@@ -136,7 +136,7 @@ svg {
   display: block;
 }
 .online {
-  font-size: 11px;
+  font-size: 12px;
   color: #37cf85;
   margin-top: 3px;
 }
@@ -283,7 +283,7 @@ button:disabled {
   color: #94a0b1;
 }
 .chip {
-  font-size: 11px;
+  font-size: 12px;
   border-radius: 5px;
   padding: 4px 7px;
   background: #edf4ff;
@@ -298,7 +298,7 @@ button:disabled {
 }
 .task-card p,
 .mini-agents {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .mini-agents {
@@ -349,7 +349,7 @@ button:disabled {
   width: max-content;
   border-radius: 12px;
   padding: 3px 8px;
-  font-size: 10px;
+  font-size: 12px;
   background: #eef2f6;
   color: #637086;
 }
@@ -455,7 +455,7 @@ button:disabled {
   align-items: center;
   gap: 5px;
   color: #98a2b0;
-  font-size: 11px;
+  font-size: 12px;
 }
 .stepper span:after {
   content: "";
@@ -555,7 +555,7 @@ button:disabled {
 }
 .workflow-choice p,
 .agent-choice p {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin: 0;
 }
@@ -573,7 +573,7 @@ button:disabled {
 }
 .phase-chips i {
   font-style: normal;
-  font-size: 9px;
+  font-size: 12px;
   color: #536174;
   background: #eff2f6;
   border-radius: 10px;
@@ -664,7 +664,7 @@ button:disabled {
   display: block;
 }
 .selection-list span {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 3px;
 }
@@ -672,7 +672,7 @@ button:disabled {
   border: 0;
   background: transparent;
   color: var(--red);
-  font-size: 11px;
+  font-size: 12px;
 }
 .agent-choice {
   display: grid;
@@ -680,7 +680,7 @@ button:disabled {
   gap: 10px;
 }
 .agent-choice small {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--blue);
   display: block;
   margin-top: 8px;
@@ -715,7 +715,7 @@ button:disabled {
   display: block;
 }
 .review-grid span {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin-bottom: 6px;
 }
@@ -735,7 +735,7 @@ button:disabled {
   font-size: 12px;
 }
 .init-note p {
-  font-size: 11px;
+  font-size: 12px;
   margin: 5px 0 0;
 }
 .wizard-footer {
@@ -763,13 +763,13 @@ button:disabled {
   margin: 3px 0 5px;
 }
 .room-header p {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   margin: 0;
   max-width: 700px;
 }
 .eyebrow {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--blue);
   font-weight: 600;
 }
@@ -779,7 +779,7 @@ button:disabled {
   gap: 10px;
 }
 .running-dot {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--green);
   background: #eaf9f2;
   padding: 5px 9px;
@@ -805,7 +805,7 @@ button:disabled {
   display: flex;
   align-items: center;
   color: #8b96a6;
-  font-size: 9px;
+  font-size: 12px;
   padding: 0;
 }
 .phase-bar button:after {
@@ -860,7 +860,7 @@ button:disabled {
   gap: 7px;
   align-items: center;
   color: #687589;
-  font-size: 11px;
+  font-size: 12px;
   border-bottom: 2px solid transparent;
 }
 .room-tabs button.active {
@@ -888,7 +888,7 @@ button:disabled {
   background: #fbfcfe;
 }
 .team-rail h3 {
-  font-size: 10px;
+  font-size: 12px;
   text-transform: uppercase;
   color: #778397;
   margin: 4px 9px 10px;
@@ -921,7 +921,7 @@ button:disabled {
 .team-rail > button .agent-avatar {
   width: 29px;
   height: 29px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .team-rail > button div {
   flex: 1;
@@ -932,10 +932,10 @@ button:disabled {
   display: block;
 }
 .team-rail strong {
-  font-size: 11px;
+  font-size: 12px;
 }
 .team-rail small {
-  font-size: 8px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 2px;
 }
@@ -951,7 +951,7 @@ button:disabled {
   gap: 8px;
   padding: 7px 10px;
   align-items: center;
-  font-size: 10px;
+  font-size: 12px;
 }
 .workspace-mini svg {
   width: 14px;
@@ -991,7 +991,7 @@ button:disabled {
   display: grid;
   place-items: center;
   font-weight: 700;
-  font-size: 10px;
+  font-size: 12px;
   color: #526174;
 }
 .message.human .message-avatar {
@@ -1007,10 +1007,10 @@ button:disabled {
   gap: 8px;
 }
 .message header strong {
-  font-size: 11px;
+  font-size: 12px;
 }
 .message header time {
-  font-size: 9px;
+  font-size: 12px;
   color: #99a3b2;
 }
 .markdown {
@@ -1037,7 +1037,7 @@ button:disabled {
   color: #4670a7;
   padding: 7px 9px;
   border-radius: 6px;
-  font-size: 9px;
+  font-size: 12px;
   margin-top: 8px;
 }
 .evidence-link svg {
@@ -1057,15 +1057,15 @@ button:disabled {
   color: inherit;
 }
 .running-card strong {
-  font-size: 11px;
+  font-size: 12px;
 }
 .running-card p {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
   margin: 3px 0;
 }
 .running-card code {
-  font-size: 9px;
+  font-size: 12px;
   color: #54708f;
   white-space: pre-wrap;
 }
@@ -1074,7 +1074,7 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   color: var(--blue);
-  font-size: 8px;
+  font-size: 12px;
 }
 .running-card > div:last-child svg {
   width: 14px;
@@ -1098,12 +1098,12 @@ button:disabled {
 .composer-top select {
   border: 0;
   padding: 3px;
-  font-size: 10px;
+  font-size: 12px;
   color: #335c92;
 }
 .composer-top span,
 .composer-foot span {
-  font-size: 8px;
+  font-size: 12px;
   color: #909baa;
 }
 .composer textarea {
@@ -1146,7 +1146,7 @@ button:disabled {
   margin: 0;
 }
 .inspector > header p {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
   margin: 3px 0;
 }
@@ -1171,7 +1171,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 9px;
+  font-size: 12px;
 }
 .inspector-actions svg {
   width: 12px;
@@ -1190,7 +1190,7 @@ button:disabled {
 .session-list h4,
 .run-detail h4,
 .phase-detail h4 {
-  font-size: 9px;
+  font-size: 12px;
   text-transform: uppercase;
   color: #7d899a;
 }
@@ -1210,7 +1210,7 @@ button:disabled {
 .session-list span,
 .session-list small {
   display: block;
-  font-size: 8px;
+  font-size: 12px;
 }
 .session-list small {
   color: var(--muted);
@@ -1233,14 +1233,14 @@ button:disabled {
   background: #eef2f7;
   border-radius: 10px;
   padding: 4px 7px;
-  font-size: 8px;
+  font-size: 12px;
 }
 .run-meta svg {
   width: 10px;
 }
 .run-detail pre {
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.5;
   background: #101a26;
   color: #cfdeef;
@@ -1257,18 +1257,18 @@ button:disabled {
   margin-bottom: 6px;
 }
 .evidence-list strong {
-  font-size: 9px;
+  font-size: 12px;
   margin-left: 6px;
 }
 .evidence-list p {
-  font-size: 8px;
+  font-size: 12px;
   color: #657285;
   white-space: pre-wrap;
   max-height: 70px;
   overflow: auto;
 }
 .evidence-status {
-  font-size: 7px;
+  font-size: 12px;
   padding: 2px 4px;
   border-radius: 4px;
   background: #edf1f6;
@@ -1319,7 +1319,7 @@ button:disabled {
   display: grid;
   place-items: center;
   font-style: normal;
-  font-size: 9px;
+  font-size: 12px;
   z-index: 1;
   background: #fff;
 }
@@ -1327,15 +1327,15 @@ button:disabled {
   width: 11px;
 }
 .phase-list strong {
-  font-size: 10px;
+  font-size: 12px;
 }
 .phase-list p {
-  font-size: 8px;
+  font-size: 12px;
   color: var(--muted);
   margin: 3px 0;
 }
 .phase-list > div > span {
-  font-size: 7px;
+  font-size: 12px;
   color: #8c97a7;
 }
 .phase-list .active {
@@ -1362,7 +1362,7 @@ button:disabled {
 }
 .phase-detail > p {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .deliverable {
   border: 1px solid var(--border);
@@ -1371,18 +1371,18 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .phase-detail label {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   margin: 8px 0;
 }
 .phase-detail label input {
   margin-right: 7px;
 }
 .human-mode {
-  font-size: 9px;
+  font-size: 12px;
   background: #fff4dc;
   color: #a46a0a;
   padding: 5px 8px;
@@ -1402,7 +1402,7 @@ button:disabled {
   padding: 14px;
 }
 .artifact-list h3 {
-  font-size: 11px;
+  font-size: 12px;
   margin: 3px 5px 11px;
 }
 .artifact-list button {
@@ -1426,7 +1426,7 @@ button:disabled {
 .artifact-list strong,
 .artifact-list small {
   display: block;
-  font-size: 9px;
+  font-size: 12px;
 }
 .artifact-list small {
   color: var(--muted);
@@ -1454,7 +1454,7 @@ button:disabled {
 .artifact-view > article .primary,
 .artifact-view > article .secondary {
   padding: 7px 10px;
-  font-size: 9px;
+  font-size: 12px;
 }
 .agent-table .table-head,
 .agent-table .table-row {
@@ -1474,7 +1474,7 @@ button:disabled {
   display: block;
 }
 .agent-row small {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 3px;
 }
@@ -1505,7 +1505,7 @@ button:disabled {
   font-size: 19px;
 }
 .modal header p {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .modal header button {
@@ -1520,7 +1520,7 @@ button:disabled {
   color: #3e628e;
   border-radius: 7px;
   padding: 12px;
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 17px;
 }
 .permission-note svg,
@@ -1558,7 +1558,7 @@ button:disabled {
   padding: 9px;
   border-radius: 6px;
   color: #59677b;
-  font-size: 11px;
+  font-size: 12px;
 }
 .settings-layout > aside button.active {
   background: #eaf2ff;
@@ -1593,7 +1593,7 @@ button:disabled {
   margin: 0;
 }
 .runtime-list h3 b {
-  font-size: 8px;
+  font-size: 12px;
   background: #eef2f7;
   padding: 3px 5px;
   border-radius: 4px;
@@ -1601,7 +1601,7 @@ button:disabled {
 }
 .runtime-list p,
 .runtime-list small {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
   margin: 4px 0;
 }
@@ -1610,7 +1610,7 @@ button:disabled {
   align-items: center;
   gap: 5px;
   color: #919baa;
-  font-size: 9px;
+  font-size: 12px;
 }
 .runtime-state.available {
   color: var(--green);
@@ -1627,10 +1627,10 @@ button:disabled {
   color: var(--green);
 }
 .security-banner strong {
-  font-size: 11px;
+  font-size: 12px;
 }
 .security-banner p {
-  font-size: 9px;
+  font-size: 12px;
   margin: 4px 0;
 }
 .list-card {

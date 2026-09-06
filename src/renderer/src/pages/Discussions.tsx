@@ -82,7 +82,7 @@ export default function Discussions({
     <section className="page discussions-page">
       <header className="page-header">
         <div>
-          <h1>多人聊天</h1>
+          <h1>团队讨论</h1>
           <p>
             让多个角色围绕一个问题产生认知碰撞，并将结论沉淀为文档或正式任务。
           </p>
@@ -269,7 +269,7 @@ function NewConversation({
       <div className="discussion-modal">
         <header>
           <div>
-            <h2>新建多人聊天</h2>
+            <h2>新建团队讨论</h2>
             <p>定义问题和模式，系统会自动配置适合本次聊天的角色。</p>
           </div>
           <button className="icon-btn" onClick={onClose}>
@@ -417,7 +417,7 @@ function NewConversation({
               </div>
             ) : (
               <div className="role-template-warning">
-                至少需要配置两个可用 Agent，才能创建多人聊天。
+                至少需要配置两个可用 Agent，才能创建团队讨论。
               </div>
             )}
           </div>

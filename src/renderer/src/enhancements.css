@@ -29,7 +29,7 @@
 .agent-binding-card p {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 .binding-controls {
   display: grid;
@@ -43,14 +43,14 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 7px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .binding-controls label,
 .permission-options label {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 9px;
+  font-size: 12px;
   color: #59677b;
 }
 .permission-options {
@@ -70,7 +70,7 @@
 .session-facts span,
 .session-facts strong {
   display: block;
-  font-size: 8px;
+  font-size: 12px;
 }
 .session-facts span {
   color: var(--muted);
@@ -87,7 +87,7 @@
 }
 .task-state-list small {
   grid-column: 2;
-  font-size: 8px;
+  font-size: 12px;
   color: var(--muted);
 }
 .issue-list > div {
@@ -98,25 +98,25 @@
   margin-bottom: 7px;
 }
 .issue-list > div > span {
-  font-size: 7px;
+  font-size: 12px;
   background: #fee4e6;
   color: #c7333d;
   padding: 3px 5px;
   border-radius: 4px;
 }
 .issue-list strong {
-  font-size: 9px;
+  font-size: 12px;
   margin-left: 6px;
 }
 .issue-list p {
-  font-size: 8px;
+  font-size: 12px;
   color: #7c5255;
 }
 .issue-list button {
   border: 0;
   background: transparent;
   color: var(--blue);
-  font-size: 8px;
+  font-size: 12px;
   padding: 0;
 }
 .page-actions {
@@ -160,7 +160,7 @@
   gap: 10px;
   margin: 14px 0 12px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .task-center-meta > span:last-child {
   display: inline-flex;
@@ -214,7 +214,7 @@
 .discussion-stats span {
   display: flex;
   flex-direction: column;
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
 }
 .discussion-stats strong {
@@ -249,7 +249,7 @@
   display: inline-flex;
   padding: 4px 7px;
   border-radius: 5px;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.03em;
   background: #e8edf4;
@@ -277,7 +277,7 @@
   align-items: center;
   gap: 6px;
   color: var(--blue);
-  font-size: 9px;
+  font-size: 12px;
   margin-top: 16px;
 }
 .discussion-mode svg {
@@ -289,7 +289,7 @@
 }
 .discussion-card > p {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.6;
   height: 48px;
   overflow: hidden;
@@ -325,7 +325,7 @@
   border-top: 1px solid var(--border);
   padding-top: 12px;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 12px;
   align-items: center;
 }
 .discussion-card footer svg {
@@ -380,7 +380,7 @@
 .discussion-modal > footer {
   border: 0;
   border-top: 1px solid var(--border);
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
 }
 .discussion-modal > footer > div {
@@ -394,7 +394,7 @@
 .discussion-modal header p {
   margin: 4px 0 0;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 .discussion-form {
   padding: 18px 20px;
@@ -408,7 +408,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 600;
 }
 .discussion-form input,
@@ -429,7 +429,7 @@
 }
 .field-label {
   display: block;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 600;
   margin-bottom: 7px;
 }
@@ -459,11 +459,11 @@
   color: var(--blue);
 }
 .mode-grid strong {
-  font-size: 9px;
+  font-size: 12px;
 }
 .mode-grid small {
   grid-column: 1/-1;
-  font-size: 8px;
+  font-size: 12px;
   color: var(--muted);
   line-height: 1.4;
 }
@@ -503,7 +503,7 @@
 }
 .discussion-agent-list small {
   color: var(--muted);
-  font-size: 8px;
+  font-size: 12px;
 }
 .discussion-agent-list svg {
   width: 16px;
@@ -560,7 +560,7 @@
 .conversation-header p {
   margin: 0;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   max-width: 700px;
 }
 .conversation-controls {
@@ -588,7 +588,7 @@
 .conversation-progress > div > span {
   display: flex;
   justify-content: space-between;
-  font-size: 8px;
+  font-size: 12px;
 }
 .conversation-progress small {
   color: var(--muted);
@@ -625,7 +625,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 9px;
+  font-size: 12px;
   border-bottom: 2px solid transparent;
 }
 .conversation-tabs button.active {
@@ -657,7 +657,7 @@
   display: flex;
   gap: 6px;
   align-items: center;
-  font-size: 9px;
+  font-size: 12px;
   margin: 5px 4px 10px;
 }
 .conversation-roles h3:not(:first-child) {
@@ -691,11 +691,11 @@
   min-width: 0;
 }
 .conversation-roles strong {
-  font-size: 9px;
+  font-size: 12px;
 }
 .conversation-roles strong i {
   font-style: normal;
-  font-size: 7px;
+  font-size: 12px;
   background: #e8f0ff;
   color: var(--blue);
   padding: 2px 4px;
@@ -703,7 +703,7 @@
   margin-left: 4px;
 }
 .conversation-roles small {
-  font-size: 7px;
+  font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -721,14 +721,14 @@
 }
 .memory-card strong {
   display: block;
-  font-size: 8px;
+  font-size: 12px;
   margin-top: 8px;
 }
 .memory-card strong:first-child {
   margin-top: 0;
 }
 .memory-card p {
-  font-size: 8px;
+  font-size: 12px;
   color: var(--muted);
   line-height: 1.5;
   margin: 3px 0;
@@ -746,7 +746,7 @@
   border-bottom: 1px solid var(--border);
 }
 .round-timeline span {
-  font-size: 7px;
+  font-size: 12px;
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -806,14 +806,14 @@
   margin-bottom: 7px;
 }
 .conversation-turn header strong {
-  font-size: 9px;
+  font-size: 12px;
 }
 .conversation-turn header small {
   color: var(--muted);
-  font-size: 7px;
+  font-size: 12px;
 }
 .conversation-turn .markdown {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.65;
 }
 .thinking-output {
@@ -821,7 +821,7 @@
   align-items: center;
   gap: 8px;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 12px;
   white-space: pre-wrap;
 }
 .thinking-output svg {
@@ -830,7 +830,7 @@
 }
 .turn-error {
   color: #be3440;
-  font-size: 8px;
+  font-size: 12px;
 }
 .conversation-welcome {
   text-align: center;
@@ -863,10 +863,10 @@
   background: #eef4fd;
   border-radius: 5px;
   padding: 5px;
-  font-size: 8px;
+  font-size: 12px;
 }
 .discussion-composer span {
-  font-size: 7px;
+  font-size: 12px;
   color: var(--muted);
 }
 .discussion-composer textarea {
@@ -896,7 +896,7 @@
   overflow: auto;
 }
 .conversation-results > aside h3 {
-  font-size: 9px;
+  font-size: 12px;
   margin: 5px 4px 9px;
 }
 .conversation-results > aside h3:not(:first-child) {
@@ -927,10 +927,10 @@
   flex-direction: column;
 }
 .conversation-results > aside strong {
-  font-size: 8px;
+  font-size: 12px;
 }
 .conversation-results > aside small {
-  font-size: 7px;
+  font-size: 12px;
   color: var(--muted);
 }
 .conversation-results > main {
@@ -949,7 +949,7 @@
   font-size: 17px;
 }
 .conversation-results article > .markdown {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.7;
 }
 .result-empty {
@@ -990,17 +990,17 @@
   flex-direction: column;
 }
 .convert-task strong {
-  font-size: 9px;
+  font-size: 12px;
 }
 .convert-task small {
-  font-size: 7px;
+  font-size: 12px;
   color: var(--muted);
 }
 .convert-task select {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px;
-  font-size: 8px;
+  font-size: 12px;
 }
 @media (max-width: 1200px) {
   .discussion-grid {
@@ -1029,7 +1029,7 @@
   }
 }
 .brand-mark {
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: -0.5px;
 }
 .task-menu {
@@ -1058,7 +1058,7 @@
   gap: 8px;
   color: #344055;
   text-align: left;
-  font-size: 11px;
+  font-size: 12px;
 }
 .task-menu-popover button:hover {
   background: #f2f6fc;
@@ -1091,7 +1091,7 @@
 .mention-title {
   padding: 6px 8px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -1113,7 +1113,7 @@
 .mention-popover .agent-avatar {
   width: 28px;
   height: 28px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .mention-popover > button > div {
   flex: 1;
@@ -1124,12 +1124,12 @@
   display: block;
 }
 .mention-popover strong {
-  font-size: 11px;
+  font-size: 12px;
 }
 .mention-popover small {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1137,12 +1137,12 @@
 .mention-popover em {
   font-style: normal;
   color: var(--blue);
-  font-size: 9px;
+  font-size: 12px;
 }
 .mention-popover > p {
   margin: 7px 8px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 .editable-agent-table .table-head,
 .editable-agent-table .table-row {
@@ -1157,7 +1157,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .table-action:hover {
   border-color: #9dbcf0;
@@ -1199,11 +1199,11 @@
 .workflow-template-row p {
   margin: 4px 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .workflow-template-row small {
   color: #8792a3;
-  font-size: 9px;
+  font-size: 12px;
 }
 .workflow-template-row > button {
   border: 0;
@@ -1212,7 +1212,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: 12px;
   padding: 8px;
 }
 .workflow-template-row > button:hover {
@@ -1253,7 +1253,7 @@
   display: grid;
   place-items: center;
   font-style: normal;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 .workflow-phase-heading {
@@ -1266,7 +1266,7 @@
   font-size: 12px;
 }
 .workflow-phase-heading span {
-  font-size: 8px;
+  font-size: 12px;
   background: #f0f3f7;
   color: #667386;
   border-radius: 10px;
@@ -1275,7 +1275,7 @@
 .workflow-detail-phase p {
   margin: 4px 0 7px;
   color: #556276;
-  font-size: 10px;
+  font-size: 12px;
 }
 .workflow-detail-phase dl {
   display: grid;
@@ -1289,13 +1289,13 @@
   padding: 7px;
 }
 .workflow-detail-phase dt {
-  font-size: 8px;
+  font-size: 12px;
   color: var(--muted);
   margin-bottom: 3px;
 }
 .workflow-detail-phase dd {
   margin: 0;
-  font-size: 9px;
+  font-size: 12px;
   color: #39465a;
 }
 .usage-meter {
@@ -1319,18 +1319,18 @@
   background: #f2f7ff;
 }
 .usage-pill strong {
-  font-size: 11px;
+  font-size: 12px;
   color: #17263a;
 }
 .usage-pill span {
-  font-size: 8px;
+  font-size: 12px;
   color: #718097;
   text-transform: uppercase;
 }
 .usage-pill em {
   grid-column: 1/-1;
   font-style: normal;
-  font-size: 8px;
+  font-size: 12px;
   color: #0c8a64;
   margin-top: 1px;
 }
@@ -1363,12 +1363,12 @@
   font-size: 12px;
 }
 .usage-popover > header small {
-  font-size: 8px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 2px;
 }
 .usage-popover > header > span {
-  font-size: 8px;
+  font-size: 12px;
   background: #eff4fa;
   padding: 4px 7px;
   border-radius: 10px;
@@ -1391,7 +1391,7 @@
   display: block;
 }
 .usage-total span {
-  font-size: 8px;
+  font-size: 12px;
   color: var(--muted);
 }
 .usage-total strong {
@@ -1413,15 +1413,15 @@
   display: block;
 }
 .usage-grid span {
-  font-size: 7px;
+  font-size: 12px;
   color: var(--muted);
 }
 .usage-grid strong {
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 2px;
 }
 .usage-popover h4 {
-  font-size: 8px;
+  font-size: 12px;
   text-transform: uppercase;
   color: #7a879a;
   margin: 12px 0 6px;
@@ -1441,19 +1441,19 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 9px;
+  font-size: 12px;
 }
 .usage-agent-list .agent-avatar {
   width: 20px;
   height: 20px;
-  font-size: 7px;
+  font-size: 12px;
 }
 .usage-agent-list strong {
-  font-size: 9px;
+  font-size: 12px;
 }
 .usage-agent-list em {
   font-style: normal;
-  font-size: 8px;
+  font-size: 12px;
   color: #0c8a64;
   min-width: 54px;
   text-align: right;
@@ -1467,11 +1467,11 @@
   background: #fff8ed;
   border: 1px solid #f3dfba;
   border-radius: 7px;
-  font-size: 8px;
+  font-size: 12px;
   color: #8a6325;
 }
 .usage-waste strong {
-  font-size: 9px;
+  font-size: 12px;
 }
 .usage-note {
   font-size: 7px !important;
@@ -1495,7 +1495,7 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .limit-grid label > small {
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 400;
   color: var(--muted);
 }
@@ -1505,7 +1505,7 @@
 .role-template-note {
   margin: 0 0 9px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.55;
 }
 .role-template-list > div {
@@ -1523,10 +1523,10 @@
   flex-direction: column;
 }
 .role-template-heading strong {
-  font-size: 10px;
+  font-size: 12px;
 }
 .role-template-heading small {
-  font-size: 8px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 3px;
 }
@@ -1543,7 +1543,7 @@
   color: #8b6324;
   border-radius: 8px;
   padding: 12px;
-  font-size: 9px;
+  font-size: 12px;
 }
 .conversation-room {
   height: 100vh;
@@ -1577,7 +1577,7 @@
   margin: 0;
 }
 .memory-card .markdown {
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
 }
@@ -1596,7 +1596,7 @@
 .conversation-turn header strong em {
   font-style: normal;
   color: var(--blue);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 500;
   margin-left: 5px;
 }
@@ -1619,7 +1619,7 @@
   background: #f7f9fc;
   border-bottom: 1px solid #edf0f4;
   color: #6f7b8f;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
 }
 .discussion-mention-options {
@@ -1648,7 +1648,7 @@
 .discussion-mention-options .agent-avatar {
   width: 30px;
   height: 30px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .discussion-mention-copy {
   display: block;
@@ -1659,12 +1659,12 @@
   display: block;
 }
 .discussion-mention-copy strong {
-  font-size: 11px;
+  font-size: 12px;
 }
 .discussion-mention-copy small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1672,13 +1672,13 @@
 .discussion-mention-options em {
   font-style: normal;
   color: var(--blue);
-  font-size: 8px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .discussion-mention-options > p {
   margin: 8px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 .conversation-completion-card {
   display: grid;
@@ -1709,7 +1709,7 @@
   background: #fff3d8;
   border-radius: 10px;
   padding: 3px 7px;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 700;
 }
 .completion-copy h2 {
@@ -1717,7 +1717,7 @@
   margin: 6px 0 4px;
 }
 .completion-copy p {
-  font-size: 9px;
+  font-size: 12px;
   color: #526176;
   line-height: 1.55;
   margin: 0;
@@ -1726,7 +1726,7 @@
   display: block;
   margin-top: 7px;
   color: #7d8999;
-  font-size: 8px;
+  font-size: 12px;
 }
 .completion-actions {
   grid-column: 2;
@@ -1744,7 +1744,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 8px;
+  font-size: 12px;
   cursor: pointer;
   list-style: none;
 }
@@ -1796,10 +1796,10 @@
   display: block;
 }
 .completion-actions > details > div strong {
-  font-size: 9px;
+  font-size: 12px;
 }
 .completion-actions > details > div small {
-  font-size: 7px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 2px;
 }
@@ -1830,11 +1830,11 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 600;
 }
 .round-limit small {
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 400;
   color: var(--muted);
 }
@@ -1883,7 +1883,7 @@
 }
 .notification-row em {
   font-style: normal;
-  font-size: 9px;
+  font-size: 12px;
   color: var(--blue);
 }
 .long-term-layout {
@@ -1922,7 +1922,7 @@
   display: block;
 }
 .employee-list small {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 4px;
 }
@@ -1947,7 +1947,7 @@
 }
 .employee-head p {
   margin: 5px 0 0;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
 }
 .detail-tabs {
@@ -1959,7 +1959,7 @@
   border: 0;
   background: transparent;
   padding: 13px 15px;
-  font-size: 11px;
+  font-size: 12px;
   color: #667386;
   border-bottom: 2px solid transparent;
 }
@@ -2000,12 +2000,12 @@
   margin: 0;
 }
 .panel-actions p {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin-top: 4px;
 }
 .memory-panel section h4 {
-  font-size: 11px;
+  font-size: 12px;
   color: #69768a;
   margin-top: 25px;
 }
@@ -2026,11 +2026,11 @@
 }
 .governance-card header span,
 .governance-card small {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
 }
 .governance-card p {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
 }
@@ -2047,7 +2047,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 9px;
+  font-size: 12px;
 }
 .governance-card footer .primary {
   background: var(--blue);
@@ -2076,7 +2076,7 @@
   color: var(--blue);
 }
 .workorder-metrics span {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .workorder-metrics strong {
@@ -2109,12 +2109,12 @@
   justify-content: space-between;
 }
 .workorder-list p {
-  font-size: 11px;
+  font-size: 12px;
   margin: 6px 0;
   color: #4c586a;
 }
 .workorder-list small {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
 }
 .workorder-room {
@@ -2135,7 +2135,7 @@
   flex: 1;
 }
 .workorder-room > header span {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--blue);
 }
 .workorder-room > header h1 {
@@ -2143,7 +2143,7 @@
   margin: 4px 0;
 }
 .workorder-room > header p {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin: 0;
 }
@@ -2160,13 +2160,13 @@
 }
 .workorder-body > aside h3,
 .evidence-board h3 {
-  font-size: 10px;
+  font-size: 12px;
   text-transform: uppercase;
   color: #6c788a;
   margin: 18px 0 8px;
 }
 .workorder-body dl {
-  font-size: 10px;
+  font-size: 12px;
 }
 .workorder-body dt {
   color: var(--muted);
@@ -2192,7 +2192,7 @@
   border-bottom: 1px solid var(--border);
   height: 48px;
   align-items: center;
-  font-size: 10px;
+  font-size: 12px;
 }
 .workorder-tabs .active {
   color: var(--blue);
@@ -2243,10 +2243,10 @@
   background: #fff;
 }
 .evidence-board strong {
-  font-size: 10px;
+  font-size: 12px;
 }
 .evidence-board p {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
   white-space: pre-wrap;
   max-height: 90px;
@@ -2272,7 +2272,7 @@
   margin: 0;
 }
 .schedule-list p {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin: 5px 0;
 }
@@ -2293,7 +2293,7 @@
   background: #fff;
   border-radius: 16px;
   padding: 5px 9px;
-  font-size: 9px;
+  font-size: 12px;
   display: flex;
   gap: 5px;
   align-items: center;
@@ -2314,11 +2314,11 @@
   display: block;
 }
 .schedule-facts span {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
 }
 .schedule-facts strong {
-  font-size: 10px;
+  font-size: 12px;
   color: #344055;
   margin-top: 4px;
 }

@@ -186,7 +186,7 @@ export default function ConversationRoom({
         </button>
         <div>
           <div className="eyebrow">
-            多人聊天 #{conversation.number} · {modeName(conversation.mode)}
+            团队讨论 #{conversation.number} · {modeName(conversation.mode)}
           </div>
           <h1>{conversation.title}</h1>
           <p>{conversation.topic}</p>

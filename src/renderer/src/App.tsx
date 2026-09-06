@@ -7,6 +7,8 @@ import {
   CalendarClock,
   LayoutDashboard,
   LoaderCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   UserRoundCog,
 } from "lucide-react";
@@ -43,11 +45,19 @@ type Route = {
     | "workflows";
   id?: string;
   createRequest?: number;
+  tab?: "chat" | "workflow" | "artifacts";
+  artifactId?: string;
 };
 
 export default function App(): import("react").JSX.Element {
   const { ready, load, apply, snapshot, notice } = useAppStore();
   const [route, setRoute] = useState<Route>({ page: "dashboard" });
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem("sidebar-collapsed") === "true",
+  );
+  useEffect(() => {
+    localStorage.setItem("sidebar-collapsed", String(collapsed));
+  }, [collapsed]);
   useEffect(() => {
     void load();
     return window.moxt.onRuntimeEvent(apply);
@@ -82,22 +92,36 @@ export default function App(): import("react").JSX.Element {
       </div>
     );
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="logo">
-          <div className="brand-mark">AT</div>
+          <button
+            className="brand-mark"
+            aria-label={collapsed ? "展开导航" : "收起导航"}
+            onClick={() => setCollapsed((v) => !v)}
+          >
+            AT
+          </button>
           <div>
             <strong>Agent Teams</strong>
             <span>AI Team Runtime</span>
           </div>
         </div>
-        <nav>
+        <button
+          className="sidebar-toggle"
+          onClick={() => setCollapsed((v) => !v)}
+          aria-label={collapsed ? "展开导航" : "收起导航"}
+        >
+          {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+        </button>
+        <nav aria-label="主导航">
           <Nav
             icon={<LayoutDashboard />}
             label="工作台"
             active={route.page === "dashboard"}
             onClick={() => setRoute({ page: "dashboard" })}
           />
+          <div className="nav-group">工作 · 协作任务与岗位工作单</div>
           <Nav
             icon={<Boxes />}
             label="任务中心"
@@ -115,8 +139,20 @@ export default function App(): import("react").JSX.Element {
             }
           />
           <Nav
+            icon={<BriefcaseBusiness />}
+            label="工作单"
+            active={route.page === "work-orders" || route.page === "work-order"}
+            onClick={() => setRoute({ page: "work-orders" })}
+            badge={
+              snapshot.workOrders.filter((item) =>
+                ["RUNNING", "BLOCKED"].includes(item.status),
+              ).length
+            }
+          />
+          <div className="nav-group">团队协作</div>
+          <Nav
             icon={<Brain />}
-            label="多人聊天"
+            label="团队讨论"
             active={
               route.page === "discussions" || route.page === "conversation"
             }
@@ -133,22 +169,12 @@ export default function App(): import("react").JSX.Element {
             onClick={() => setRoute({ page: "employees" })}
           />
           <Nav
-            icon={<BriefcaseBusiness />}
-            label="工作单"
-            active={route.page === "work-orders" || route.page === "work-order"}
-            onClick={() => setRoute({ page: "work-orders" })}
-            badge={
-              snapshot.workOrders.filter((item) =>
-                ["RUNNING", "BLOCKED"].includes(item.status),
-              ).length
-            }
-          />
-          <Nav
             icon={<CalendarClock />}
             label="定时计划"
             active={route.page === "schedules"}
             onClick={() => setRoute({ page: "schedules" })}
           />
+          <div className="nav-group">管理</div>
           <Nav
             icon={<Bell />}
             label="通知"
@@ -166,8 +192,11 @@ export default function App(): import("react").JSX.Element {
         <div className="sidebar-foot">
           <span className="avatar">M</span>
           <div>
-            <strong>Max</strong>
-            <span className="online">● 在线</span>
+            <strong>本地工作台</strong>
+            <span className="online">
+              {snapshot.runtimes.filter((r) => r.available).length}{" "}
+              个运行环境可用
+            </span>
           </div>
         </div>
       </aside>
@@ -178,7 +207,12 @@ export default function App(): import("react").JSX.Element {
             onNewChat={() =>
               setRoute({ page: "discussions", createRequest: Date.now() })
             }
-            onOpen={(id) => setRoute({ page: "task", id })}
+            onOpen={(id, tab, artifactId) =>
+              setRoute({ page: "task", id, tab, artifactId })
+            }
+            onOpenOrder={(id) => setRoute({ page: "work-order", id })}
+            onSchedules={() => setRoute({ page: "schedules" })}
+            onConversation={(id) => setRoute({ page: "conversation", id })}
           />
         )}
         {route.page === "new" && (
@@ -191,7 +225,15 @@ export default function App(): import("react").JSX.Element {
             onOpenWorkflows={() => setRoute({ page: "workflows" })}
           />
         )}
-        {route.page === "task" && active && <TaskRoom change={active} />}
+        {route.page === "task" && active && (
+          <TaskRoom
+            key={active.id}
+            change={active}
+            initialTab={route.tab}
+            initialArtifactId={route.artifactId}
+            onBack={() => setRoute({ page: "tasks" })}
+          />
+        )}
         {route.page === "discussions" && (
           <Discussions
             createRequest={route.createRequest}
@@ -209,7 +251,12 @@ export default function App(): import("react").JSX.Element {
           <Agents onBack={() => setRoute({ page: "employees" })} />
         )}
         {route.page === "employees" && (
-          <LongTermAgents onManageAgents={() => setRoute({ page: "agents" })} />
+          <LongTermAgents
+            onManageAgents={() => setRoute({ page: "agents" })}
+            onOpenTask={(id) => setRoute({ page: "task", id })}
+            onOpenOrder={(id) => setRoute({ page: "work-order", id })}
+            onSchedules={() => setRoute({ page: "schedules" })}
+          />
         )}
         {route.page === "work-orders" && (
           <WorkOrders onOpen={(id) => setRoute({ page: "work-order", id })} />
@@ -285,7 +332,13 @@ function Nav({
   badge?: number;
 }): import("react").JSX.Element {
   return (
-    <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick}>
+    <button
+      title={label}
+      aria-label={label}
+      aria-current={active ? "page" : undefined}
+      className={`nav-item ${active ? "active" : ""}`}
+      onClick={onClick}
+    >
       {icon}
       <span>{label}</span>
       {Boolean(badge) && <em>{badge}</em>}

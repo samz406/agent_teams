@@ -37,7 +37,7 @@ export default function Tasks({
       <header className="page-header">
         <div>
           <h1>任务中心</h1>
-          <p>统一查看正式任务、运行状态、执行团队和 Evidence 验收结果。</p>
+          <p>多人协作完成的任务；数字员工的日常执行请查看「工作单」。</p>
         </div>
         <div className="page-actions">
           <button className="secondary" onClick={onOpenWorkflows}>
@@ -74,11 +74,6 @@ export default function Tasks({
         <div className="task-card-grid">
           {snapshot.changes.map((change) => {
             const phases = phasesFor(change.workflowType, change.currentPhase);
-            const denominator = Math.max(1, phases.length - 1);
-            const progress = Math.min(
-              100,
-              Math.round((change.currentPhase / denominator) * 100),
-            );
             return (
               <button
                 className="task-card"
@@ -104,9 +99,6 @@ export default function Tasks({
                     <Users /> {change.agentIds.length} 个 Agent ·{" "}
                     {change.workspaceIds.length} 个工作空间
                   </span>
-                </div>
-                <div className="progress">
-                  <i style={{ width: `${progress}%` }} />
                 </div>
               </button>
             );
