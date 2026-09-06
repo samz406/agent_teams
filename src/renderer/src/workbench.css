@@ -1084,3 +1084,18 @@ button.work-row:hover {
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
+/* Keep all workflow stages reachable without clipping at desktop minimum width. */
+.phase-bar {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  overflow: visible;
+  gap: 10px;
+}
+.phase-bar button:after {
+  width: 18px;
+  margin: 0 4px 0 12px;
+}
+.logo strong {
+  font-size: 16px;
+  white-space: nowrap;
+}

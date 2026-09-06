@@ -6,7 +6,8 @@ import { resolve, join } from "node:path";
 import assert from "node:assert/strict";
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("no-sandbox");
-if (process.env.UI_HEADLESS !== "0") app.commandLine.appendSwitch("ozone-platform", "headless");
+if (process.env.UI_HEADLESS !== "0")
+  app.commandLine.appendSwitch("ozone-platform", "headless");
 const temp = mkdtempSync(join(tmpdir(), "agent-teams-ui-"));
 app.setPath("userData", temp);
 const screenshotDir =
@@ -329,135 +330,143 @@ const timer = setTimeout(() => {
   console.error("UI smoke timed out");
   app.exit(1);
 }, 60000);
-try {
-  console.log("Starting Electron UI smoke");
-  await app.whenReady();
-  console.log("Electron ready");
-  win = new BrowserWindow({
-    width: 1440,
-    height: 940,
-    show: false,
-    webPreferences: {
-      preload: resolve("out/preload/index.mjs"),
-      contextIsolation: true,
-      sandbox: true,
-      offscreen: true,
-    },
-  });
-  const errors = [];
-  win.webContents.on("console-message", (_event, level, message) => {
-    if (level >= 3 && !message.includes("Content-Security-Policy"))
-      errors.push(message);
-  });
-  console.log("Loading renderer");
-  await win.loadFile(resolve("out/renderer/index.html"));
-  console.log("Renderer loaded");
-  await settle();
-  for (const width of [1440, 1024, 760]) {
-    win.setSize(width, 940);
+async function main() {
+  try {
+    console.log("Starting Electron UI smoke");
+    await app.whenReady();
+    console.log("Electron ready");
+    win = new BrowserWindow({
+      width: 1440,
+      height: 940,
+      show: false,
+      webPreferences: {
+        preload: resolve("out/preload/index.cjs"),
+        contextIsolation: true,
+        sandbox: true,
+        offscreen: true,
+      },
+    });
+    const errors = [];
+    win.webContents.on("console-message", (_event, level, message) => {
+      if (level >= 3 && !message.includes("Content-Security-Policy")) {
+        errors.push(message);
+        console.error("Renderer:", message);
+      }
+    });
+    console.log("Loading renderer");
+    await win.loadFile(resolve("out/renderer/index.html"));
+    console.log("Renderer loaded");
+
+    await settle();
+    for (const width of [1440, 1024, 760]) {
+      win.setSize(width, 940);
+      await nav("工作台");
+      console.log(`Checking ${width}px`);
+      await fits("dashboard " + width);
+      assert.equal(
+        await js(
+          `/今日完成\\s*1/.test(document.querySelector('.workbench-summary').textContent)`,
+        ),
+        true,
+      );
+      if (width === 1440) await screenshot("workbench");
+      await click("去处理");
+      await fits("review " + width);
+      if (width === 1440) await screenshot("task-review");
+      await click("协作动态");
+      await fits("chat " + width);
+      await click("执行流程", ".room-tabs button");
+      await fits("workflow " + width);
+      await nav("数字员工");
+      await fits("employees " + width);
+      if (width === 1440) await screenshot("employees");
+      await click("岗位说明");
+      await fits("profile " + width);
+      await nav("任务中心");
+      await fits("tasks " + width);
+      await nav("工作单");
+      await fits("orders " + width);
+      await nav("定时计划");
+      await fits("schedules " + width);
+      await nav("团队讨论");
+      await fits("discussions " + width);
+      await nav("设置");
+      await fits("settings " + width);
+    }
+    win.setSize(1440, 940);
     await nav("工作台");
-    console.log(`Checking ${width}px`);
-    await fits("dashboard " + width);
+    await click("去处理");
+    await click("批准并继续执行");
+    assert.deepEqual(
+      calls.slice(-2).map((c) => c[0]),
+      ["approve", "advance"],
+    );
+    assert.ok(
+      (
+        await js(`document.querySelector('.review-actions').textContent`)
+      ).includes("审批已保存，阶段尚未推进"),
+    );
+    await click("协作动态");
+    await click("Architect", ".team-rail button");
     assert.equal(
-      await js(
-        `/今日完成\\s*1/.test(document.querySelector('.workbench-summary').textContent)`,
-      ),
+      await js(`Boolean(document.querySelector('[role="dialog"]'))`),
       true,
     );
-    if (width === 1440) await screenshot("workbench");
-    await click("去处理");
-    await fits("review " + width);
-    if (width === 1440) await screenshot("task-review");
-    await click("协作动态");
-    await fits("chat " + width);
-    await click("执行流程", ".room-tabs button");
-    await fits("workflow " + width);
-    await nav("数字员工");
-    await fits("employees " + width);
-    if (width === 1440) await screenshot("employees");
-    await click("岗位说明");
-    await fits("profile " + width);
-    await nav("任务中心");
-    await fits("tasks " + width);
-    await nav("工作单");
-    await fits("orders " + width);
-    await nav("定时计划");
-    await fits("schedules " + width);
-    await nav("团队讨论");
-    await fits("discussions " + width);
-    await nav("设置");
-    await fits("settings " + width);
+    await fits("inspector");
+    await js(
+      `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
+    );
+    await settle();
+    assert.equal(
+      await js(`Boolean(document.querySelector('[role="dialog"]'))`),
+      false,
+    );
+    await nav("工作台");
+    await click("新建任务");
+    await js(
+      `(()=>{const inputs=document.querySelectorAll('.form-grid input');const areas=document.querySelectorAll('.form-grid textarea');function set(e,value){Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,value);e.dispatchEvent(new Event('input',{bubbles:true}));}set(inputs[0],'修复接口错误');set(areas[0],'保持兼容');set(areas[1],'回归测试通过');})()`,
+    );
+    await settle();
+    await click("下一步");
+    await js(
+      `document.querySelectorAll('.workspace-option input').forEach(e=>e.click())`,
+    );
+    await settle();
+    await click("Architect", ".agent-binding-card button");
+    await js(
+      `(()=>{const e=document.querySelector('.binding-controls select');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,'w2');e.dispatchEvent(new Event('change',{bubbles:true}));})()`,
+    );
+    await settle();
+    await js(`document.querySelectorAll('.workspace-option input')[1].click()`);
+    await settle();
+    assert.equal(
+      await js(`document.querySelector('.binding-controls select').value`),
+      "w",
+    );
+    await fits("new task bindings");
+    await click("下一步");
+    await screenshot("new-task");
+    await click("创建并开始执行");
+    const create = calls.find((c) => c[0] === "create")[1];
+    assert.deepEqual(create.workspaceIds, ["w"]);
+    assert.equal(create.agentBindings[0].workspaceId, "w");
+    assert.equal(create.workflowType, "bug-fix");
+    assert.match(create.description, /验收标准/);
+    assert.deepEqual(errors, []);
+    console.log(
+      "UI smoke passed: 3 viewport widths, 10 page states, review partial failure, drawer Escape, goal-first creation and binding recovery.",
+    );
+    console.log("Screenshots:", screenshotDir);
+    clearTimeout(timer);
+    win.destroy();
+    if (process.env.UI_SCREENSHOT_DIR)
+      rmSync(temp, { recursive: true, force: true });
+    app.exit(0);
+  } catch (error) {
+    console.error(error);
+    clearTimeout(timer);
+    app.exit(1);
   }
-  win.setSize(1440, 940);
-  await nav("工作台");
-  await click("去处理");
-  await click("批准并继续执行");
-  assert.deepEqual(
-    calls.slice(-2).map((c) => c[0]),
-    ["approve", "advance"],
-  );
-  assert.ok(
-    (
-      await js(`document.querySelector('.review-actions').textContent`)
-    ).includes("审批已保存，阶段尚未推进"),
-  );
-  await click("协作动态");
-  await click("Architect", ".team-rail button");
-  assert.equal(
-    await js(`Boolean(document.querySelector('[role="dialog"]'))`),
-    true,
-  );
-  await fits("inspector");
-  await js(
-    `document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
-  );
-  await settle();
-  assert.equal(
-    await js(`Boolean(document.querySelector('[role="dialog"]'))`),
-    false,
-  );
-  await nav("工作台");
-  await click("新建任务");
-  await js(
-    `(()=>{const inputs=document.querySelectorAll('.form-grid input');const areas=document.querySelectorAll('.form-grid textarea');function set(e,value){Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,value);e.dispatchEvent(new Event('input',{bubbles:true}));}set(inputs[0],'修复接口错误');set(areas[0],'保持兼容');set(areas[1],'回归测试通过');})()`,
-  );
-  await settle();
-  await click("下一步");
-  await js(
-    `document.querySelectorAll('.workspace-option input').forEach(e=>e.click())`,
-  );
-  await settle();
-  await click("Architect", ".agent-binding-card button");
-  await js(
-    `(()=>{const e=document.querySelector('.binding-controls select');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,'w2');e.dispatchEvent(new Event('change',{bubbles:true}));})()`,
-  );
-  await settle();
-  await js(`document.querySelectorAll('.workspace-option input')[1].click()`);
-  await settle();
-  assert.equal(
-    await js(`document.querySelector('.binding-controls select').value`),
-    "w",
-  );
-  await fits("new task bindings");
-  await click("下一步");
-  await screenshot("new-task");
-  await click("创建并开始执行");
-  const create = calls.find((c) => c[0] === "create")[1];
-  assert.deepEqual(create.workspaceIds, ["w"]);
-  assert.equal(create.agentBindings[0].workspaceId, "w");
-  assert.equal(create.workflowType, "bug-fix");
-  assert.match(create.description, /验收标准/);
-  assert.deepEqual(errors, []);
-  console.log(
-    "UI smoke passed: 3 viewport widths, 10 page states, review partial failure, drawer Escape, goal-first creation and binding recovery.",
-  );
-  console.log("Screenshots:", screenshotDir);
-  clearTimeout(timer);
-  win.destroy();
-  if (process.env.UI_SCREENSHOT_DIR) rmSync(temp, { recursive: true, force: true });
-  app.exit(0);
-} catch (error) {
-  console.error(error);
-  clearTimeout(timer);
-  app.exit(1);
 }
+// Do not await readiness at ESM top level: Electron waits for entry-module evaluation.
+void main();
