@@ -6,7 +6,7 @@ import { resolve, join } from "node:path";
 import assert from "node:assert/strict";
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("no-sandbox");
-app.commandLine.appendSwitch("ozone-platform", "headless");
+if (process.env.UI_HEADLESS !== "0") app.commandLine.appendSwitch("ozone-platform", "headless");
 const temp = mkdtempSync(join(tmpdir(), "agent-teams-ui-"));
 app.setPath("userData", temp);
 const screenshotDir =
@@ -356,10 +356,11 @@ try {
   for (const width of [1440, 1024, 760]) {
     win.setSize(width, 940);
     await nav("工作台");
+    console.log(`Checking ${width}px`);
     await fits("dashboard " + width);
     assert.equal(
       await js(
-        `document.querySelector('.workbench-summary').textContent.includes('今日完成 1')`,
+        `/今日完成\\s*1/.test(document.querySelector('.workbench-summary').textContent)`,
       ),
       true,
     );
@@ -453,7 +454,7 @@ try {
   console.log("Screenshots:", screenshotDir);
   clearTimeout(timer);
   win.destroy();
-  rmSync(temp, { recursive: true, force: true });
+  if (process.env.UI_SCREENSHOT_DIR) rmSync(temp, { recursive: true, force: true });
   app.exit(0);
 } catch (error) {
   console.error(error);
