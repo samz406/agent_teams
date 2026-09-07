@@ -16,6 +16,7 @@ import type {
   MemoryScope,
 } from "../../../shared/contracts";
 import { errorText, useAppStore } from "../store";
+import { dateTime, recent } from "../workbench";
 import { statusLabel } from "../status-labels";
 
 const split = (value: string): string[] =>
@@ -26,12 +27,20 @@ const split = (value: string): string[] =>
 
 export default function LongTermAgents({
   onManageAgents,
+  onOpenTask,
+  onOpenOrder,
+  onSchedules,
 }: {
   onManageAgents(): void;
+  onOpenTask(id: string): void;
+  onOpenOrder(id: string): void;
+  onSchedules(): void;
 }): import("react").JSX.Element {
   const { snapshot, notify } = useAppStore();
   const [agentId, setAgentId] = useState(snapshot.agents[0]?.id ?? "");
-  const [tab, setTab] = useState<"profile" | "memory" | "skill">("profile");
+  const [tab, setTab] = useState<"overview" | "profile" | "memory" | "skill">(
+    "overview",
+  );
   const agent = snapshot.agents.find((item) => item.id === agentId);
   const profile = snapshot.agentProfiles.find(
     (item) => item.agentId === agentId,
@@ -49,7 +58,7 @@ export default function LongTermAgents({
         </div>
         <button className="secondary" onClick={onManageAgents}>
           <Cog />
-          Agent 与 Runtime 配置
+          员工与运行环境配置
         </button>
       </header>
       <div className="long-term-layout">
@@ -91,6 +100,12 @@ export default function LongTermAgents({
               </header>
               <nav className="detail-tabs">
                 <button
+                  className={tab === "overview" ? "active" : ""}
+                  onClick={() => setTab("overview")}
+                >
+                  工作概览
+                </button>
+                <button
                   className={tab === "profile" ? "active" : ""}
                   onClick={() => setTab("profile")}
                 >
@@ -112,9 +127,18 @@ export default function LongTermAgents({
                   className={tab === "skill" ? "active" : ""}
                   onClick={() => setTab("skill")}
                 >
-                  Skills <em>{skills.length}</em>
+                  工作方法 <em>{skills.length}</em>
                 </button>
               </nav>
+              {tab === "overview" && (
+                <EmployeeOverview
+                  agentId={agentId}
+                  profile={profile}
+                  onOpenTask={onOpenTask}
+                  onOpenOrder={onOpenOrder}
+                  onSchedules={onSchedules}
+                />
+              )}
               {tab === "profile" && <ProfileEditor profile={profile} />}{" "}
               {tab === "memory" && <MemoryPanel agentId={agentId} />}{" "}
               {tab === "skill" && <SkillPanel agentId={agentId} />}
@@ -128,6 +152,139 @@ export default function LongTermAgents({
         </main>
       </div>
     </section>
+  );
+}
+
+function EmployeeOverview({
+  agentId,
+  profile,
+  onOpenTask,
+  onOpenOrder,
+  onSchedules,
+}: {
+  agentId: string;
+  profile: AgentProfile;
+  onOpenTask(id: string): void;
+  onOpenOrder(id: string): void;
+  onSchedules(): void;
+}): import("react").JSX.Element {
+  const { snapshot } = useAppStore();
+  const orders = recent(
+    snapshot.workOrders.filter((o) => o.ownerAgentId === agentId),
+  );
+  const tasks = recent(
+    snapshot.changes.filter((t) => t.agentIds.includes(agentId)),
+  );
+  const schedules = snapshot.schedules
+    .filter((s) => s.ownerAgentId === agentId && s.enabled)
+    .sort((a, b) => a.nextRunAt.localeCompare(b.nextRunAt));
+  const deliveries = snapshot.deliverables
+    .filter((d) => orders.some((o) => o.id === d.workOrderId))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return (
+    <div className="employee-overview">
+      <section className="outcome-card">
+        <span className="eyebrow">长期职责</span>
+        <h2>
+          {profile.outcomeStatement ||
+            profile.positionTitle ||
+            "尚未填写岗位目标"}
+        </h2>
+        <ul>
+          {profile.recurringResponsibilities.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ul>
+        <p>
+          岗位状态：{statusLabel(profile.status)}。
+          {profile.status !== "ACTIVE"
+            ? "启用岗位并完成权限配置后，才能执行岗位工作。"
+            : "工作状态与计划以实际执行记录为准。"}
+        </p>
+      </section>
+      <div className="section-title">
+        <h2>当前与最近工作</h2>
+      </div>
+      <div className="list-card">
+        {orders.slice(0, 5).map((o) => (
+          <button
+            className="work-row"
+            key={o.id}
+            onClick={() => onOpenOrder(o.id)}
+          >
+            <div>
+              <strong>{o.title}</strong>
+              <small>
+                {o.statusReason || "岗位工作单"} · {dateTime(o.updatedAt)}
+              </small>
+            </div>
+            <span className={`status ${o.status.toLowerCase()}`}>
+              {statusLabel(o.status)}
+            </span>
+          </button>
+        ))}
+        {tasks.slice(0, 5).map((t) => (
+          <button
+            className="work-row"
+            key={t.id}
+            onClick={() => onOpenTask(t.id)}
+          >
+            <div>
+              <strong>{t.title}</strong>
+              <small>参与协作任务 · {dateTime(t.updatedAt)}</small>
+            </div>
+            <span className={`status ${t.status.toLowerCase()}`}>
+              {statusLabel(t.status)}
+            </span>
+          </button>
+        ))}
+        {!orders.length && !tasks.length && (
+          <div className="quiet-empty">
+            尚未参与工作，分配任务后会展示进展。
+          </div>
+        )}
+      </div>
+      <div className="section-title">
+        <h2>最近交付</h2>
+      </div>
+      <div className="list-card">
+        {deliveries.slice(0, 3).map((d) => (
+          <button
+            className="work-row"
+            key={d.id}
+            onClick={() => onOpenOrder(d.workOrderId)}
+          >
+            <div>
+              <strong>{d.title}</strong>
+              <small>{dateTime(d.createdAt)}</small>
+            </div>
+            <span>查看交付</span>
+          </button>
+        ))}
+        {!deliveries.length && (
+          <div className="quiet-empty">
+            暂无岗位交付；协作方案可进入关联任务查看。
+          </div>
+        )}
+      </div>
+      <div className="section-title">
+        <h2>下一次执行</h2>
+        <button className="text-button" onClick={onSchedules}>
+          管理计划
+        </button>
+      </div>
+      {schedules.slice(0, 3).map((s) => (
+        <button className="work-row list-card" key={s.id} onClick={onSchedules}>
+          <div>
+            <strong>{s.name}</strong>
+            <small>
+              {dateTime(s.nextRunAt)} · 本机时间（计划时区 {s.timezone}）
+            </small>
+          </div>
+        </button>
+      ))}
+      {!schedules.length && <p className="quiet-empty">暂无启用的计划。</p>}
+    </div>
   );
 }
 

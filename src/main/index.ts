@@ -56,14 +56,14 @@ function createWindow(): void {
   window = new BrowserWindow({
     width: 1500,
     height: 940,
-    minWidth: 1100,
-    minHeight: 700,
+    minWidth: 760,
+    minHeight: 600,
     show: false,
     backgroundColor: "#f4f7fb",
     title: "Agent Teams",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
-      preload: join(__dirname, "../preload/index.mjs"),
+      preload: join(__dirname, "../preload/index.cjs"),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,

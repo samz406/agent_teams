@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   ArrowLeft,
   FileText,
@@ -20,6 +21,7 @@ export default function WorkOrderRoom({
   onBack(): void;
 }): import("react").JSX.Element {
   const { snapshot, live, notify } = useAppStore();
+  const [tab, setTab] = useState<"delivery" | "runtime">("delivery");
   const owner = snapshot.agents.find((item) => item.id === order.ownerAgentId);
   const runs = snapshot.runs.filter((item) => item.workOrderId === order.id);
   const run = runs.find((item) => item.id === order.currentRunId) ?? runs[0];
@@ -111,10 +113,20 @@ export default function WorkOrderRoom({
         </aside>
         <main>
           <div className="workorder-tabs">
-            <span className="active">业务交付</span>
-            <span>Runtime 与 Evidence</span>
+            <button
+              className={tab === "delivery" ? "active" : ""}
+              onClick={() => setTab("delivery")}
+            >
+              交付与验收
+            </button>
+            <button
+              className={tab === "runtime" ? "active" : ""}
+              onClick={() => setTab("runtime")}
+            >
+              执行记录
+            </button>
           </div>
-          {deliverable ? (
+          {tab === "delivery" && deliverable ? (
             <article className="deliverable-document">
               <header>
                 <FileText />

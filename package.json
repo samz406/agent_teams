@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit",
     "package": "npm run rebuild:electron && npm run build && electron-builder --dir",
     "smoke:runtime": "npm run rebuild:electron && npm run build && electron scripts/runtime-smoke.mjs --no-sandbox --ozone-platform=headless --disable-gpu",
-    "dist": "npm run rebuild:electron && npm run build && electron-builder"
+    "dist": "npm run rebuild:electron && npm run build && electron-builder",
+    "smoke:ui": "npm run build && electron scripts/ui-smoke.mjs --no-sandbox --ozone-platform=headless --disable-gpu"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -38,6 +39,7 @@
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
+    "happy-dom": "^20.14.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vitest": "^2.1.8"
@@ -46,9 +48,28 @@
     "appId": "ai.agentteams.runtime",
     "productName": "Agent Teams",
     "asar": true,
-    "files": ["out/**/*", "package.json"],
-    "mac": { "target": ["dmg", "zip"], "category": "public.app-category.developer-tools" },
-    "win": { "target": ["nsis"] },
-    "linux": { "target": ["AppImage", "deb"], "category": "Development" }
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development"
+    }
   }
 }

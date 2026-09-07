@@ -1,19 +1,17 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
-  Bot,
   Check,
   CheckCircle2,
   FolderGit2,
   LoaderCircle,
-  Plus,
-  ShieldCheck,
-  Sparkles,
+  RefreshCw,
 } from "lucide-react";
 import type { WorkflowType } from "../../../shared/contracts";
 import { WORKFLOW_LABELS, WORKFLOWS } from "../../../shared/workflows";
 import { errorText, useAppStore } from "../store";
+import { recommendWorkflow, taskPreflight } from "../workbench";
 
 export default function NewTask({
   onCreated,
@@ -22,66 +20,120 @@ export default function NewTask({
 }): import("react").JSX.Element {
   const { snapshot, notify } = useAppStore();
   const [step, setStep] = useState(1);
-  const [workflow, setWorkflow] = useState<WorkflowType>("cross-project");
-  const [form, setForm] = useState({ title: "", description: "", tags: "" });
-  const [workspaceIds, setWorkspaceIds] = useState<string[]>([]);
-  const [agentIds, setAgentIds] = useState<string[]>(
-    snapshot.agents.slice(0, 4).map((a) => a.id),
+  const [manualWorkflow, setManualWorkflow] = useState<WorkflowType | null>(
+    null,
   );
+  const [form, setForm] = useState({
+    title: "",
+    description: "",
+    acceptance: "",
+    tags: "",
+  });
+  const [workspaceIds, setWorkspaceIds] = useState<string[]>([]);
+  const [agentIds, setAgentIds] = useState<string[]>([]);
   const [bindingMap, setBindingMap] = useState<
     Record<string, { workspaceId: string; write: boolean }>
   >({});
   const [creating, setCreating] = useState(false);
-  const valid = useMemo(
-    () =>
-      form.title.trim() &&
-      form.description.trim() &&
-      workspaceIds.length &&
-      agentIds.length &&
-      agentIds.every(
-        (id, index) =>
-          bindingMap[id]?.workspaceId ||
-          workspaceIds[index % workspaceIds.length],
-      ),
-    [form, workspaceIds, agentIds, bindingMap],
+  const [detecting, setDetecting] = useState(false);
+  const [runtimes, setRuntimes] = useState(snapshot.runtimes);
+  const [addedWorkspaces, setAddedWorkspaces] = useState(snapshot.workspaces);
+  const workspaces = [
+    ...new Map(
+      [...addedWorkspaces, ...snapshot.workspaces].map((w) => [w.id, w]),
+    ).values(),
+  ];
+  const selectedWorkspaces = workspaces.filter((w) =>
+    workspaceIds.includes(w.id),
+  );
+  const selectedAgents = snapshot.agents.filter((a) => agentIds.includes(a.id));
+  const recommendation = recommendWorkflow(`${form.title} ${form.description}`);
+  const workflow = manualWorkflow ?? recommendation;
+  // Display, preflight and submission all use the same resolved binding.
+  const bindings = Object.fromEntries(
+    selectedAgents.map((agent) => [
+      agent.id,
+      {
+        workspaceId: workspaceIds.includes(bindingMap[agent.id]?.workspaceId)
+          ? bindingMap[agent.id].workspaceId
+          : (workspaceIds[0] ?? ""),
+        write: bindingMap[agent.id]?.write ?? agent.permissions.write,
+      },
+    ]),
+  );
+  const errors = taskPreflight(
+    selectedAgents,
+    selectedWorkspaces,
+    runtimes,
+    bindings,
+  );
+  const goalValid = Boolean(
+    form.title.trim() && form.description.trim() && form.acceptance.trim(),
   );
   async function addWorkspace(): Promise<void> {
-    const value = await window.moxt.selectWorkspace();
-    if (value) setWorkspaceIds((ids) => [...new Set([...ids, value.id])]);
+    try {
+      const value = await window.moxt.selectWorkspace();
+      if (value) {
+        setAddedWorkspaces((ws) => [
+          ...ws.filter((w) => w.id !== value.id),
+          value,
+        ]);
+        setWorkspaceIds((ids) => [...new Set([...ids, value.id])]);
+      }
+    } catch (error) {
+      notify("error", errorText(error));
+    }
+  }
+  async function detect(): Promise<void> {
+    setDetecting(true);
+    try {
+      setRuntimes(await window.moxt.detectRuntimes());
+    } catch (error) {
+      notify("error", errorText(error));
+    } finally {
+      setDetecting(false);
+    }
   }
   async function create(): Promise<void> {
+    if (creating || !goalValid || errors.length) return;
     setCreating(true);
     try {
-      const agentBindings = agentIds.map((agentId, index) => {
-        const agent = snapshot.agents.find((item) => item.id === agentId)!;
-        const configured = bindingMap[agentId];
-        return {
-          agentId,
-          workspaceId:
-            configured?.workspaceId ||
-            workspaceIds[index % workspaceIds.length],
-          permissions: {
-            ...agent.permissions,
-            write: configured?.write ?? agent.permissions.write,
-          },
-        };
-      });
-      const value = await window.moxt.createChange({
-        title: form.title,
-        description: form.description,
+      const freshRuntimes = await window.moxt.detectRuntimes();
+      setRuntimes(freshRuntimes);
+      const freshErrors = taskPreflight(
+        selectedAgents,
+        selectedWorkspaces,
+        freshRuntimes,
+        bindings,
+      );
+      if (freshErrors.length) {
+        notify("error", freshErrors.join(" "));
+        setStep(2);
+        return;
+      }
+      const result = await window.moxt.createChange({
+        title: form.title.trim(),
+        description: `${form.description.trim()}\n\n## 验收标准\n${form.acceptance.trim()}`,
         workflowType: workflow,
         priority: "P1",
         dueDate: null,
         workspaceIds,
         agentIds,
-        agentBindings,
+        agentBindings: selectedAgents.map((agent) => ({
+          agentId: agent.id,
+          workspaceId: bindings[agent.id].workspaceId,
+          permissions: {
+            ...agent.permissions,
+            write: bindings[agent.id].write,
+          },
+        })),
         tags: form.tags
-          .split(",")
-          .map((x) => x.trim())
+          .split(/[,，]/)
+          .map((t) => t.trim())
           .filter(Boolean),
       });
-      notify("success", "任务已创建，Runtime Scheduler 已自动启动当前阶段");
-      onCreated(value.id);
+      notify("success", "任务已创建，正在进入执行阶段");
+      onCreated(result.id);
     } catch (error) {
       notify("error", errorText(error));
     } finally {
@@ -93,67 +145,29 @@ export default function NewTask({
       <header className="page-header">
         <div>
           <h1>新建任务</h1>
-          <p>
-            从目标、Workflow、Workspace 到 Agent Team，一次完成真实执行准备。
-          </p>
+          <p>先说明目标，再选择团队与项目，确认后开始执行。</p>
         </div>
         <div className="stepper">
-          {["协作模式", "任务信息", "Workspace", "Agent", "确认"].map(
-            (label, i) => (
-              <span className={step >= i + 1 ? "on" : ""} key={label}>
-                <b>{step > i + 1 ? <Check /> : i + 1}</b>
-                {label}
-              </span>
-            ),
-          )}
+          {["目标与验收", "团队与项目", "确认启动"].map((label, i) => (
+            <span
+              className={step >= i + 1 ? "on" : ""}
+              key={label}
+              aria-current={step === i + 1 ? "step" : undefined}
+            >
+              <b>{step > i + 1 ? <Check /> : i + 1}</b>
+              {label}
+            </span>
+          ))}
         </div>
       </header>
       <div className="wizard-card">
         {step === 1 && (
           <>
             <div className="wizard-heading">
-              <Sparkles />
-              <div>
-                <h2>选择协作模式</h2>
-                <p>
-                  Workflow 定义责任、交付物与 Gate；Leader 决定具体执行顺序。
-                </p>
-              </div>
-            </div>
-            <div className="workflow-choice">
-              {Object.entries(WORKFLOW_LABELS).map(([key, item]) => (
-                <button
-                  className={workflow === key ? "selected" : ""}
-                  onClick={() => setWorkflow(key as WorkflowType)}
-                  key={key}
-                >
-                  <span className="choice-icon">
-                    <ShieldCheck />
-                  </span>
-                  <div>
-                    <h3>{item.name}</h3>
-                    <p>{item.description}</p>
-                    <div className="phase-chips">
-                      {WORKFLOWS[key as WorkflowType].slice(0, 5).map((p) => (
-                        <i key={p.id}>{p.name}</i>
-                      ))}
-                    </div>
-                  </div>
-                  {workflow === key && (
-                    <CheckCircle2 className="selected-check" />
-                  )}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-        {step === 2 && (
-          <>
-            <div className="wizard-heading">
               <CheckCircle2 />
               <div>
-                <h2>填写任务基本信息</h2>
-                <p>让团队理解目标、边界与完成标准，而不只是一句模糊指令。</p>
+                <h2>你希望团队完成什么？</h2>
+                <p>清晰的完成标准能减少反复沟通。</p>
               </div>
             </div>
             <div className="form-grid">
@@ -163,102 +177,150 @@ export default function NewTask({
                   value={form.title}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
                   placeholder="例如：修复工作流模板详情页点击无响应"
+                  required
                 />
               </label>
               <label className="full">
-                任务描述
+                目标与约束
                 <textarea
                   value={form.description}
                   onChange={(e) =>
                     setForm({ ...form, description: e.target.value })
                   }
-                  placeholder="说明问题现象、目标、约束、验收标准和不可修改范围…"
+                  placeholder="说明现状、期望结果，以及不可修改的范围。"
+                  required
                 />
               </label>
               <label className="full">
-                标签
+                验收标准
+                <textarea
+                  value={form.acceptance}
+                  onChange={(e) =>
+                    setForm({ ...form, acceptance: e.target.value })
+                  }
+                  placeholder="例如：模板卡片可打开详情；返回后保留选择；现有测试通过。"
+                  required
+                />
+              </label>
+              <label className="full">
+                标签（可选）
                 <input
                   value={form.tags}
                   onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                  placeholder="bug, workflow（逗号分隔，可选）"
+                  placeholder="用逗号分隔"
                 />
               </label>
             </div>
-          </>
-        )}
-        {step === 3 && (
-          <>
-            <div className="wizard-heading">
-              <FolderGit2 />
-              <div>
-                <h2>挂载真实 Workspace</h2>
-                <p>
-                  选择本机项目目录。Agent Teams 会读取 Git 分支和基线
-                  Commit，不会上传源码。
-                </p>
-              </div>
+            <div className="section-title">
+              <h2>协作模式</h2>
+              <span>按目标关键词推荐，可手动调整</span>
             </div>
-            <button className="drop-zone" onClick={() => void addWorkspace()}>
-              <FolderGit2 />
-              <h3>添加本地项目目录</h3>
-              <p>支持普通目录或 Git Repository</p>
-              <span>
-                <Plus />
-                选择目录
-              </span>
-            </button>
-            <div className="selection-list">
-              {snapshot.workspaces
-                .filter((w) => workspaceIds.includes(w.id))
-                .map((w) => (
-                  <div key={w.id}>
-                    <FolderGit2 />
-                    <div>
-                      <strong>{w.name}</strong>
-                      <span>{w.path}</span>
-                    </div>
-                    <b>{w.branch || "非 Git"}</b>
-                    <button
-                      onClick={() =>
-                        setWorkspaceIds((ids) =>
-                          ids.filter((id) => id !== w.id),
-                        )
-                      }
-                    >
-                      移除
-                    </button>
+            <div className="workflow-choice">
+              {Object.entries(WORKFLOW_LABELS).map(([key, item]) => (
+                <button
+                  className={workflow === key ? "selected" : ""}
+                  aria-pressed={workflow === key}
+                  onClick={() => setManualWorkflow(key as WorkflowType)}
+                  key={key}
+                >
+                  <div>
+                    <h3>
+                      {item.name}{" "}
+                      {recommendation === key && <small>· 推荐</small>}
+                    </h3>
+                    <p>{item.description}</p>
                   </div>
-                ))}
+                  {workflow === key && <CheckCircle2 />}
+                </button>
+              ))}
             </div>
+            {manualWorkflow && (
+              <button
+                className="text-button"
+                onClick={() => setManualWorkflow(null)}
+              >
+                恢复自动推荐
+              </button>
+            )}
           </>
         )}
-        {step === 4 && (
+        {step === 2 && (
           <>
             <div className="wizard-heading">
-              <Bot />
+              <FolderGit2 />
               <div>
-                <h2>选择 Agent 并绑定 Workspace</h2>
+                <h2>选择项目与执行团队</h2>
                 <p>
-                  每个 Agent 必须明确绑定一个工作区及读写权限；写 Agent
-                  会使用独立 Git Worktree。
+                  项目绑定和写入权限会一并提交；写入 Agent 使用独立 Git 工作树。
                 </p>
               </div>
+            </div>
+            <div className="section-title">
+              <h2>项目目录</h2>
+              <button className="secondary" onClick={() => void addWorkspace()}>
+                <FolderGit2 />
+                添加本地目录
+              </button>
+            </div>
+            <div className="workspace-options">
+              {workspaces.map((w) => (
+                <label className="workspace-option" key={w.id}>
+                  <input
+                    type="checkbox"
+                    checked={workspaceIds.includes(w.id)}
+                    onChange={(e) =>
+                      setWorkspaceIds((ids) =>
+                        e.target.checked
+                          ? [...ids, w.id]
+                          : ids.filter((id) => id !== w.id),
+                      )
+                    }
+                  />
+                  <span>
+                    <strong>{w.name}</strong>
+                    <small>
+                      {w.path} · {w.branch || "非 Git 项目"}
+                    </small>
+                  </span>
+                </label>
+              ))}
+              {!workspaces.length && (
+                <p className="quiet-empty">
+                  添加一个本地项目目录后，继续选择团队。
+                </p>
+              )}
+            </div>
+            <div className="section-title">
+              <h2>执行团队</h2>
+              <button
+                className="secondary"
+                disabled={detecting}
+                onClick={() => void detect()}
+              >
+                <RefreshCw className={detecting ? "spin" : ""} />
+                重新检测环境
+              </button>
             </div>
             <div className="agent-choice">
-              {snapshot.agents.map((agent, index) => {
+              {snapshot.agents.map((agent) => {
                 const selected = agentIds.includes(agent.id);
-                const binding = bindingMap[agent.id] || {
-                  workspaceId:
-                    workspaceIds[index % Math.max(workspaceIds.length, 1)] ||
-                    "",
+                const binding = bindings[agent.id] ?? {
+                  workspaceId: workspaceIds[0] ?? "",
                   write: agent.permissions.write,
                 };
+                const available =
+                  agent.runtime === "custom"
+                    ? Boolean(agent.command?.trim())
+                    : runtimes.some(
+                        (r) => r.type === agent.runtime && r.available,
+                      );
                 return (
                   <div
                     className={`agent-binding-card ${selected ? "selected" : ""}`}
                     key={agent.id}
                   >
                     <button
+                      aria-pressed={selected}
                       onClick={() =>
                         setAgentIds((ids) =>
                           selected
@@ -271,32 +333,43 @@ export default function NewTask({
                       <div>
                         <h3>{agent.name}</h3>
                         <p>{agent.responsibility}</p>
-                        <small>{agent.runtime}</small>
+                        <small>
+                          {agent.runtime} ·{" "}
+                          {available
+                            ? agent.runtime === "custom"
+                              ? "已配置命令（启动时验证）"
+                              : "环境可用"
+                            : "环境未就绪"}
+                        </small>
                       </div>
                       {selected && <CheckCircle2 />}
                     </button>
                     {selected && (
                       <div className="binding-controls">
-                        <select
-                          value={binding.workspaceId}
-                          onChange={(e) =>
-                            setBindingMap((map) => ({
-                              ...map,
-                              [agent.id]: {
-                                ...binding,
-                                workspaceId: e.target.value,
-                              },
-                            }))
-                          }
-                        >
-                          {snapshot.workspaces
-                            .filter((w) => workspaceIds.includes(w.id))
-                            .map((w) => (
-                              <option value={w.id} key={w.id}>
-                                {w.name} · {w.branch || "local"}
+                        <label>
+                          绑定项目
+                          <select
+                            value={binding.workspaceId}
+                            onChange={(e) =>
+                              setBindingMap((map) => ({
+                                ...map,
+                                [agent.id]: {
+                                  ...binding,
+                                  workspaceId: e.target.value,
+                                },
+                              }))
+                            }
+                          >
+                            <option value="" disabled>
+                              选择项目
+                            </option>
+                            {selectedWorkspaces.map((w) => (
+                              <option key={w.id} value={w.id}>
+                                {w.name}
                               </option>
                             ))}
-                        </select>
+                          </select>
+                        </label>
                         <label>
                           <input
                             type="checkbox"
@@ -311,7 +384,7 @@ export default function NewTask({
                               }))
                             }
                           />
-                          允许写入（独立 Worktree）
+                          允许写入（独立工作树）
                         </label>
                       </div>
                     )}
@@ -319,59 +392,86 @@ export default function NewTask({
                 );
               })}
             </div>
+            {errors.length > 0 && (
+              <div className="preflight-errors" role="status">
+                <strong>启动前需要完成</strong>
+                <ul>
+                  {errors.map((e) => (
+                    <li key={e}>{e}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </>
         )}
-        {step === 5 && (
+        {step === 3 && (
           <>
             <div className="wizard-heading">
-              <ShieldCheck />
+              <CheckCircle2 />
               <div>
-                <h2>确认并创建</h2>
-                <p>
-                  创建后会持久化任务、建立首个 Task，并立即启动当前 Workflow
-                  阶段的真实 CLI Run。
-                </p>
+                <h2>确认并启动</h2>
+                <p>启动后会实际调用所选 Agent，消耗模型用量。</p>
               </div>
+            </div>
+            <div className="outcome-card">
+              <h2>{form.title}</h2>
+              <p className="preserve-lines">{form.description}</p>
+              <h3>验收标准</h3>
+              <p className="preserve-lines">{form.acceptance}</p>
             </div>
             <div className="review-grid">
-              <Review label="任务" value={form.title} />
-              <Review label="模式" value={WORKFLOW_LABELS[workflow].name} />
-              <Review label="Workspace" value={`${workspaceIds.length} 个`} />
-              <Review label="参与 Agent" value={`${agentIds.length} 个`} />
+              <Review label="协作模式" value={WORKFLOW_LABELS[workflow].name} />
               <Review
-                label="人工 Gate"
-                value={`${WORKFLOWS[workflow].filter((p) => p.humanMode === "IN_LOOP").length} 个强 Gate`}
+                label="项目"
+                value={selectedWorkspaces.map((w) => w.name).join("、")}
+              />
+              <Review
+                label="人工确认"
+                value={`${WORKFLOWS[workflow].filter((p) => p.humanMode === "IN_LOOP").length} 个强制确认阶段`}
               />
             </div>
-            <div className="init-note">
-              <LoaderCircle />
-              <div>
-                <strong>创建后会做什么？</strong>
-                <p>
-                  持久化 Change → 校验 Workspace → 绑定 Agent Runtime →
-                  建立当前阶段 Task → 自动启动真实 Run → 进入 Team
-                  Chat。无需再发一条消息才能开始。
-                </p>
-              </div>
+            <div className="list-card">
+              {selectedAgents.map((a) => (
+                <div className="work-row" key={a.id}>
+                  <div>
+                    <strong>{a.name}</strong>
+                    <small>
+                      {a.runtime} ·{" "}
+                      {
+                        workspaces.find(
+                          (w) => w.id === bindings[a.id].workspaceId,
+                        )?.name
+                      }
+                    </small>
+                  </div>
+                  <span>{bindings[a.id].write ? "允许写入" : "只读"}</span>
+                </div>
+              ))}
             </div>
+            <p className="init-note">
+              确认后保存任务、验证项目、建立执行会话并自动启动首个阶段。后续进展、用量和交付物在任务详情中查看。
+            </p>
+            {errors.length > 0 && (
+              <div className="preflight-errors" role="alert">
+                {errors.join(" ")}
+              </div>
+            )}
           </>
         )}
         <footer className="wizard-footer">
           <button
             className="secondary"
-            disabled={step === 1}
+            disabled={step === 1 || creating}
             onClick={() => setStep((s) => s - 1)}
           >
             <ArrowLeft />
             上一步
           </button>
-          {step < 5 ? (
+          {step < 3 ? (
             <button
               className="primary"
               disabled={
-                (step === 2 && (!form.title || !form.description)) ||
-                (step === 3 && !workspaceIds.length) ||
-                (step === 4 && !agentIds.length)
+                step === 1 ? !goalValid : Boolean(errors.length) || detecting
               }
               onClick={() => setStep((s) => s + 1)}
             >
@@ -381,11 +481,11 @@ export default function NewTask({
           ) : (
             <button
               className="primary"
-              disabled={!valid || creating}
+              disabled={creating || !goalValid || Boolean(errors.length)}
               onClick={() => void create()}
             >
               {creating ? <LoaderCircle className="spin" /> : <Check />}
-              创建并开始执行
+              {creating ? "正在验证并创建…" : "创建并开始执行"}
             </button>
           )}
         </footer>
@@ -393,7 +493,6 @@ export default function NewTask({
     </section>
   );
 }
-
 function Review({
   label,
   value,

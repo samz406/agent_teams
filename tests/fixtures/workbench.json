@@ -1,0 +1,274 @@
+{
+  "changes": [
+    {
+      "id": "c",
+      "number": 128,
+      "title": "设计资产预览架构",
+      "description": "统一预览入口，明确接口边界。\n验收：加载与失败恢复路径可验证。",
+      "workflowType": "cross-project",
+      "priority": "P1",
+      "dueDate": null,
+      "status": "WAITING_HUMAN",
+      "currentPhase": 2,
+      "workspaceIds": [
+        "w"
+      ],
+      "agentIds": [
+        "a"
+      ],
+      "tags": [],
+      "createdAt": "2026-09-06T06:38:26.094Z",
+      "updatedAt": "2026-09-06T06:38:26.094Z"
+    },
+    {
+      "id": "running",
+      "number": 129,
+      "title": "修复工作流模板详情页",
+      "description": "统一预览入口，明确接口边界。\n验收：加载与失败恢复路径可验证。",
+      "workflowType": "cross-project",
+      "priority": "P1",
+      "dueDate": null,
+      "status": "RUNNING",
+      "currentPhase": 3,
+      "workspaceIds": [
+        "w"
+      ],
+      "agentIds": [
+        "a"
+      ],
+      "tags": [],
+      "createdAt": "2026-09-06T06:38:26.094Z",
+      "updatedAt": "2026-09-06T06:38:26.094Z"
+    },
+    {
+      "id": "old",
+      "number": 128,
+      "title": "设计资产预览架构",
+      "description": "统一预览入口，明确接口边界。\n验收：加载与失败恢复路径可验证。",
+      "workflowType": "cross-project",
+      "priority": "P1",
+      "dueDate": null,
+      "status": "DONE",
+      "currentPhase": 2,
+      "workspaceIds": [
+        "w"
+      ],
+      "agentIds": [
+        "a"
+      ],
+      "tags": [],
+      "createdAt": "2026-09-06T06:38:26.094Z",
+      "updatedAt": "2020-01-01T00:00:00Z"
+    }
+  ],
+  "agents": [
+    {
+      "id": "a",
+      "name": "Architect",
+      "icon": "A",
+      "description": "架构设计",
+      "responsibility": "负责方案与接口契约",
+      "qualityBar": [],
+      "runtime": "codex",
+      "command": null,
+      "argsTemplate": null,
+      "workspaceIds": [
+        "w"
+      ],
+      "permissions": {
+        "read": true,
+        "write": false,
+        "shell": true,
+        "git": true,
+        "network": false
+      },
+      "status": "IDLE",
+      "createdAt": "2026-09-06T06:38:26.094Z"
+    }
+  ],
+  "workspaces": [
+    {
+      "id": "w",
+      "name": "agent_teams",
+      "path": "/projects/agent_teams",
+      "repoRoot": "/projects/agent_teams",
+      "branch": "main",
+      "baseCommit": "abc",
+      "createdAt": "2026-09-06T06:38:26.094Z"
+    },
+    {
+      "id": "w2",
+      "name": "second_project",
+      "path": "/projects/second",
+      "repoRoot": "/projects/second",
+      "branch": "main",
+      "baseCommit": "abc",
+      "createdAt": "2026-09-06T06:38:26.094Z"
+    }
+  ],
+  "runtimes": [
+    {
+      "type": "codex",
+      "label": "Codex",
+      "executable": "codex",
+      "path": "/usr/bin/codex",
+      "version": "test",
+      "available": true,
+      "capabilities": []
+    }
+  ],
+  "messages": [
+    {
+      "id": "m",
+      "changeId": "c",
+      "senderType": "agent",
+      "senderId": "a",
+      "senderName": "Architect",
+      "content": "方案与接口契约已经整理，请确认后进入开发阶段。",
+      "runId": null,
+      "createdAt": "2026-09-06T06:38:26.094Z"
+    },
+    {
+      "id": "system",
+      "changeId": "c",
+      "senderType": "system",
+      "senderId": null,
+      "senderName": "系统",
+      "content": "读取现有接口\n已比对预览链路并整理验收要求。",
+      "runId": null,
+      "createdAt": "2026-09-06T06:38:26.094Z"
+    }
+  ],
+  "runs": [],
+  "artifacts": [
+    {
+      "id": "artifact",
+      "changeId": "c",
+      "type": "Proposal",
+      "title": "预览架构方案与接口契约",
+      "version": 2,
+      "status": "REVIEW",
+      "content": "# 预览架构方案\n\n统一预览入口，区分资产检查与游戏运行预览。\n\n## 验收要求\n- 加载成功与异常状态清晰\n- 错误可恢复\n- 接口契约可追溯",
+      "supersedes": null,
+      "createdAt": "2026-09-06T06:38:26.094Z",
+      "approvedAt": null
+    }
+  ],
+  "bindings": [],
+  "workstreams": [],
+  "tasks": [],
+  "agentSessions": [],
+  "handoffs": [],
+  "issues": [],
+  "interventions": [],
+  "conversations": [],
+  "conversationParticipants": [],
+  "conversationRounds": [],
+  "conversationTurns": [],
+  "conversationMemories": [],
+  "conversationDeliverables": [],
+  "agentProfiles": [
+    {
+      "id": "profile",
+      "agentId": "a",
+      "positionTitle": "架构师",
+      "outcomeStatement": "将复杂需求转化为可以验收的方案",
+      "recurringResponsibilities": [
+        "维护接口边界",
+        "提交架构方案"
+      ],
+      "preferredSources": [],
+      "standardDeliverables": [],
+      "acceptanceCriteria": [],
+      "prohibitedActions": [],
+      "approvalPoints": [],
+      "failurePolicy": "",
+      "defaultSkillIds": [],
+      "status": "ACTIVE",
+      "version": 1,
+      "createdAt": "2026-09-06T06:38:26.094Z",
+      "updatedAt": "2026-09-06T06:38:26.094Z"
+    }
+  ],
+  "memories": [],
+  "skills": [],
+  "skillVersions": [],
+  "workOrders": [
+    {
+      "id": "order",
+      "number": 12,
+      "title": "每日接口检查",
+      "goal": "检查接口变更",
+      "ownerAgentId": "a",
+      "createdByType": "SCHEDULE",
+      "createdById": null,
+      "scheduleId": "schedule",
+      "parentWorkOrderId": null,
+      "projectScopeId": null,
+      "workspaceId": "w",
+      "skillVersionIds": [],
+      "input": {},
+      "constraints": [],
+      "outputContract": {},
+      "requiredEvidence": [],
+      "permissions": {
+        "read": true,
+        "write": false,
+        "shell": true,
+        "git": true,
+        "network": false
+      },
+      "status": "SUCCEEDED",
+      "statusReason": null,
+      "idempotencyKey": "test",
+      "dueAt": null,
+      "currentRunId": null,
+      "startedAt": "2026-09-06T06:38:26.094Z",
+      "completedAt": "2026-09-06T06:38:26.094Z",
+      "createdAt": "2026-09-06T06:38:26.094Z",
+      "updatedAt": "2026-09-06T06:38:26.094Z"
+    }
+  ],
+  "deliverables": [
+    {
+      "id": "delivery",
+      "workOrderId": "order",
+      "runId": "test-run",
+      "title": "接口检查报告",
+      "content": "# 检查报告\n接口边界已确认。",
+      "filePath": null,
+      "sha256": null,
+      "createdAt": "2026-09-06T06:38:26.094Z"
+    }
+  ],
+  "schedules": [
+    {
+      "id": "schedule",
+      "name": "每日架构检查",
+      "ownerAgentId": "a",
+      "workOrderTemplate": {
+        "title": "检查",
+        "goal": "检查",
+        "ownerAgentId": "a"
+      },
+      "cronExpression": "0 9 * * *",
+      "timezone": "Asia/Shanghai",
+      "enabled": true,
+      "misfirePolicy": "SKIP",
+      "concurrencyPolicy": "SKIP",
+      "maxCatchUpRuns": 1,
+      "retryPolicy": {
+        "maxAttempts": 1,
+        "backoffSeconds": []
+      },
+      "nextRunAt": "2026-09-07T06:38:26.095Z",
+      "lastScheduledAt": null,
+      "leaseOwner": null,
+      "leaseExpiresAt": null,
+      "createdAt": "2026-09-06T06:38:26.094Z",
+      "updatedAt": "2026-09-06T06:38:26.094Z"
+    }
+  ],
+  "scheduleExecutions": [],
+  "notifications": []
+}

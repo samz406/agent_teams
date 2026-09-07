@@ -19,3 +19,18 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+
+      - name: Install CJK fonts for desktop screenshots
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - name: Verify Electron windows and interactions
+        env:
+          UI_HEADLESS: '0'
+          UI_SCREENSHOT_DIR: artifacts/ui
+        run: xvfb-run -a node_modules/.bin/electron scripts/ui-smoke.mjs --no-sandbox --disable-gpu
+      - name: Upload desktop screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-ui-screenshots
+          path: artifacts/ui
+          if-no-files-found: ignore

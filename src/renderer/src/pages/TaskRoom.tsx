@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   Activity,
   ArrowRight,
+  ArrowLeft,
   Check,
   ChevronRight,
   CircleStop,
@@ -31,17 +32,26 @@ import {
   usageForRun,
 } from "../../../shared/usage";
 import { errorText, useAppStore } from "../store";
+import { taskSummary } from "../workbench";
 import { statusLabel } from "../status-labels";
 
 type Tab = "chat" | "workflow" | "artifacts";
 
 export default function TaskRoom({
   change,
+  initialTab,
+  initialArtifactId,
+  onBack,
 }: {
   change: Change;
+  initialTab?: Tab;
+  initialArtifactId?: string;
+  onBack(): void;
 }): import("react").JSX.Element {
   const { snapshot, live, notify, load } = useAppStore();
-  const [tab, setTab] = useState<Tab>("chat");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "chat");
+  const [artifactId, setArtifactId] = useState(initialArtifactId);
+  const [teamOpen, setTeamOpen] = useState(false);
   const [text, setText] = useState("");
   const [target, setTarget] = useState("");
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
@@ -72,7 +82,7 @@ export default function TaskRoom({
   const taskUsage = aggregateRunUsage(runs, live);
 
   async function send(): Promise<void> {
-    if (!text.trim()) return;
+    if (!text.trim() || sending) return;
     setSending(true);
     try {
       await window.moxt.sendMessage(
@@ -159,17 +169,24 @@ export default function TaskRoom({
   return (
     <section className="task-room">
       <header className="room-header">
+        <button className="icon-btn" aria-label="返回任务中心" onClick={onBack}>
+          <ArrowLeft />
+        </button>
         <div>
           <div className="eyebrow">
             任务 #{change.number} · {WORKFLOW_LABELS[change.workflowType].name}
           </div>
           <h1>{change.title}</h1>
-          <p>{change.description}</p>
+          <details className="task-goal">
+            <summary>查看目标与验收要求</summary>
+            <p className="preserve-lines">{change.description}</p>
+          </details>
         </div>
         <div className="room-actions">
           <div className="usage-meter">
             <button
               className="usage-pill"
+              aria-expanded={usageOpen}
               onClick={() => setUsageOpen((value) => !value)}
             >
               <strong>
@@ -178,7 +195,15 @@ export default function TaskRoom({
                   : "—"}
               </strong>
               <span>tokens</span>
-              <em>{taskUsage.usageRuns ? formatCost(taskUsage) : "计量中"}</em>
+              <em>
+                {taskUsage.usageRuns
+                  ? formatCost(taskUsage)
+                  : runs.some((r) =>
+                        ["QUEUED", "STARTING", "RUNNING"].includes(r.status),
+                      )
+                    ? "计量中"
+                    : "未报告用量"}
+              </em>
             </button>
             {usageOpen && (
               <UsagePopover
@@ -254,25 +279,27 @@ export default function TaskRoom({
           onClick={() => setTab("chat")}
         >
           <MessageSquareText />
-          Team Chat
+          协作动态
         </button>
         <button
           className={tab === "workflow" ? "active" : ""}
           onClick={() => setTab("workflow")}
         >
           <Activity />
-          Workflow
+          执行流程
         </button>
         <button
           className={tab === "artifacts" ? "active" : ""}
           onClick={() => setTab("artifacts")}
         >
           <FileText />
-          Artifact <em>{artifacts.length}</em>
+          交付物与验收 <em>{artifacts.length}</em>
         </button>
       </div>
-      <div className={`room-body ${inspector ? "with-inspector" : ""}`}>
-        <aside className="team-rail">
+      <div
+        className={`room-body ${inspector ? "with-inspector" : ""} ${teamOpen ? "team-open" : ""}`}
+      >
+        <aside className="team-rail" aria-label="执行团队">
           <h3>
             <Users />
             参与者 <span>{team.length}</span>
@@ -297,7 +324,7 @@ export default function TaskRoom({
           ))}
           <h3 className="rail-section">
             <Terminal />
-            Workspaces
+            关联项目
           </h3>
           {snapshot.workspaces
             .filter((w) => change.workspaceIds.includes(w.id))
@@ -312,6 +339,37 @@ export default function TaskRoom({
             ))}
         </aside>
         <div className="room-content">
+          <div
+            className={`task-context ${["WAITING_HUMAN", "BLOCKED", "FAILED"].includes(change.status) ? "needs-attention" : ""}`}
+          >
+            <div>
+              <strong>{taskSummary(change, snapshot)}</strong>
+              <small>
+                当前阶段：{phases[change.currentPhase]?.name ?? "待开始"}
+              </small>
+            </div>
+            <button
+              className="secondary team-toggle"
+              onClick={() => setTeamOpen((v) => !v)}
+              aria-expanded={teamOpen}
+            >
+              <Users />
+              团队
+            </button>
+            <button
+              className="secondary"
+              onClick={() =>
+                setTab(
+                  change.status === "WAITING_HUMAN" &&
+                    artifacts.some((a) => a.status === "REVIEW")
+                    ? "artifacts"
+                    : "workflow",
+                )
+              }
+            >
+              {change.status === "WAITING_HUMAN" ? "查看验收" : "查看阶段"}
+            </button>
+          </div>
           {tab === "chat" && (
             <Chat
               messages={messages}
@@ -319,10 +377,21 @@ export default function TaskRoom({
               live={live}
               agents={team}
               onInspect={setSelectedAgent}
+              artifacts={artifacts}
+              onArtifact={(id) => {
+                setArtifactId(id);
+                setTab("artifacts");
+              }}
             />
           )}
           {tab === "workflow" && <WorkflowView change={change} />}
-          {tab === "artifacts" && <ArtifactView change={change} />}
+          {tab === "artifacts" && (
+            <ArtifactView
+              key={artifactId ?? "all"}
+              change={change}
+              initialArtifactId={artifactId}
+            />
+          )}
           {tab === "chat" && (
             <div className="composer">
               <div className="composer-top">
@@ -337,9 +406,7 @@ export default function TaskRoom({
                     </option>
                   ))}
                 </select>
-                <span>
-                  发送会启动真实 CLI Run；查询状态不会打断正在执行的 Run
-                </span>
+                <span>补充目标或纠偏指令；发送将产生模型用量</span>
               </div>
               <div className="composer-editor">
                 <textarea
@@ -380,6 +447,7 @@ export default function TaskRoom({
                 <span>/status 查看状态 · /plan 重新规划</span>
                 <button
                   className="send"
+                  aria-label="发送指令"
                   disabled={sending || !text.trim()}
                   onClick={() => void send()}
                 >
@@ -390,12 +458,19 @@ export default function TaskRoom({
           )}
         </div>
         {inspector && (
-          <AgentInspector
-            agent={inspector}
-            runs={runs.filter((r) => r.agentId === inspector.id)}
-            live={live}
-            onClose={() => setSelectedAgent(null)}
-          />
+          <>
+            <button
+              className="inspector-backdrop"
+              aria-label="关闭执行详情"
+              onClick={() => setSelectedAgent(null)}
+            />
+            <AgentInspector
+              agent={inspector}
+              runs={runs.filter((r) => r.agentId === inspector.id)}
+              live={live}
+              onClose={() => setSelectedAgent(null)}
+            />
+          </>
         )}
       </div>
     </section>
@@ -437,48 +512,61 @@ function UsagePopover({
       <header>
         <div>
           <strong>本任务资源消耗</strong>
-          <small>来自 Runtime Usage，不使用 tokenizer 猜测</small>
+          <small>
+            已计量 {total.usageRuns} / {runs.length} 次执行；未报告的数据以 —
+            表示
+          </small>
         </div>
         <span>{runs.length} Runs</span>
       </header>
       <div className="usage-total">
         <div>
-          <span>Total Tokens</span>
+          <span>累计 Token</span>
           <strong>
             {total.usageRuns ? total.usage.totalTokens.toLocaleString() : "—"}
           </strong>
         </div>
         <div>
-          <span>Estimated Cost</span>
+          <span>报告 / 估算费用</span>
           <strong>{formatCost(total)}</strong>
         </div>
       </div>
       <div className="usage-grid">
         <div>
-          <span>Input</span>
-          <strong>{formatTokens(total.usage.inputTokens)}</strong>
-        </div>
-        <div>
-          <span>Output</span>
-          <strong>{formatTokens(total.usage.outputTokens)}</strong>
-        </div>
-        <div>
-          <span>Cache</span>
+          <span>输入</span>
           <strong>
-            {formatTokens(
-              total.usage.cachedInputTokens +
-                total.usage.cacheCreationInputTokens,
-            )}
+            {total.usageRuns ? formatTokens(total.usage.inputTokens) : "—"}
           </strong>
         </div>
         <div>
-          <span>Reasoning</span>
-          <strong>{formatTokens(total.usage.reasoningOutputTokens)}</strong>
+          <span>输出</span>
+          <strong>
+            {total.usageRuns ? formatTokens(total.usage.outputTokens) : "—"}
+          </strong>
+        </div>
+        <div>
+          <span>缓存读写</span>
+          <strong>
+            {total.usageRuns
+              ? formatTokens(
+                  total.usage.cachedInputTokens +
+                    total.usage.cacheCreationInputTokens,
+                )
+              : "—"}
+          </strong>
+        </div>
+        <div>
+          <span>推理</span>
+          <strong>
+            {total.usageRuns
+              ? formatTokens(total.usage.reasoningOutputTokens)
+              : "—"}
+          </strong>
         </div>
       </div>
       {byAgent.length > 0 && (
         <>
-          <h4>By Agent</h4>
+          <h4>按 Agent 统计</h4>
           <div className="usage-agent-list">
             {byAgent.map((item) => (
               <div key={item.agent.id}>
@@ -495,12 +583,50 @@ function UsagePopover({
       )}
       {waste.usageRuns > 0 && (
         <div className="usage-waste">
-          <span>Retry / Failed 消耗</span>
+          <span>重试 / 失败消耗</span>
           <strong>
             {formatTokens(waste.usage.totalTokens)} · {formatCost(waste)}
           </strong>
         </div>
       )}
+      <details className="usage-sources">
+        <summary>计量来源与计价版本</summary>
+        {runs.map((run) => {
+          const summary = usageForRun(run, live[run.id]);
+          if (!summary)
+            return (
+              <p key={run.id}>
+                {run.runtime} · {run.id.slice(0, 8)}：尚未报告用量
+              </p>
+            );
+          const stamp = run.evidence
+            .filter((e) => e.type === "USAGE")
+            .sort((a, b) =>
+              b.createdAt.localeCompare(a.createdAt),
+            )[0]?.createdAt;
+          return (
+            <p key={run.id}>
+              <strong>{summary.model || run.runtime}</strong> ·{" "}
+              {summary.costType === "REPORTED"
+                ? "运行环境报告金额"
+                : summary.costType === "ESTIMATED"
+                  ? "按模型费率估算"
+                  : "费用未知"}
+              <br />
+              {summary.pricingVersion || "无估算费率版本"} ·{" "}
+              {stamp
+                ? `计量记录 ${new Date(stamp).toLocaleString()}`
+                : live[run.id]
+                  ? "随执行输出更新"
+                  : "暂无计量时间"}
+            </p>
+          );
+        })}
+        <p>
+          缓存读写为缓存命中与缓存创建 Token 合计；推理 Token
+          按运行环境报告口径展示，不能直接与其余字段相加。
+        </p>
+      </details>
       <p className="usage-note">
         金额为 CLI 报告值或按对应模型公开费率估算，不代表 Plus / Pro /
         企业订阅的实际账单扣费。未知模型只统计 Token，不猜价格。
@@ -515,18 +641,48 @@ function Chat({
   live,
   agents,
   onInspect,
+  artifacts,
+  onArtifact,
 }: {
   messages: ReturnType<typeof useAppStore.getState>["snapshot"]["messages"];
   runs: Run[];
   live: Record<string, string>;
   agents: Agent[];
   onInspect(id: string): void;
+  artifacts: import("../../../shared/contracts").Artifact[];
+  onArtifact(id: string): void;
 }): import("react").JSX.Element {
   const activeRuns = runs.filter((r) =>
     ["QUEUED", "STARTING", "RUNNING"].includes(r.status),
   );
   return (
     <div className="chat-scroll">
+      {artifacts
+        .filter((a) => a.status !== "DEPRECATED")
+        .slice()
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 3)
+        .map((a) => (
+          <button
+            className="chat-artifact"
+            key={a.id}
+            onClick={() => onArtifact(a.id)}
+          >
+            <FileText />
+            <div>
+              <strong>{a.title}</strong>
+              <small>
+                v{a.version} · {statusLabel(a.status)}
+              </small>
+            </div>
+            <ChevronRight />
+          </button>
+        ))}
+      {!messages.length && !activeRuns.length && (
+        <div className="quiet-empty">
+          任务动态会显示在这里。可查看当前阶段或向负责人补充指令。
+        </div>
+      )}
       {activeRuns.map((run) => {
         const agent = agents.find((a) => a.id === run.agentId);
         const usage = usageForRun(run, live[run.id]);
@@ -584,9 +740,20 @@ function Chat({
                   </span>
                 )}
               </header>
-              <div className="markdown">
-                <ReactMarkdown>{message.content}</ReactMarkdown>
-              </div>
+              {message.senderType === "system" ? (
+                <details className="execution-record">
+                  <summary>
+                    执行记录 · {message.content.split("\n")[0].slice(0, 80)}
+                  </summary>
+                  <div className="markdown">
+                    <ReactMarkdown>{message.content}</ReactMarkdown>
+                  </div>
+                </details>
+              ) : (
+                <div className="markdown">
+                  <ReactMarkdown>{message.content}</ReactMarkdown>
+                </div>
+              )}
               {run && (
                 <button
                   className="evidence-link"
@@ -621,6 +788,39 @@ function AgentInspector({
   onClose(): void;
 }): import("react").JSX.Element {
   const { notify, snapshot } = useAppStore();
+  const drawerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    drawerRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+      if (event.key === "Tab") {
+        const items = Array.from(
+          drawerRef.current?.querySelectorAll<HTMLElement>(
+            "button:not([disabled]), input, select, textarea, a[href]",
+          ) ?? [],
+        ).filter((el) => el.getClientRects().length > 0);
+        const first = items[0],
+          last = items[items.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        }
+        if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", keyboard);
+    return () => {
+      document.removeEventListener("keydown", keyboard);
+      previous?.focus();
+    };
+  }, []);
   const [selected, setSelected] = useState(runs[0]?.id);
   const run = runs.find((r) => r.id === selected) || runs[0];
   async function control(
@@ -641,7 +841,13 @@ function AgentInspector({
   const usage = run ? usageForRun(run, live[run.id]) : null;
   const duration = run ? formatDuration(run) : null;
   return (
-    <aside className="inspector">
+    <aside
+      className="inspector"
+      ref={drawerRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${agent.name} 执行详情`}
+    >
       <header>
         <div className="agent-avatar">{agent.icon}</div>
         <div>
@@ -650,7 +856,7 @@ function AgentInspector({
             {agent.runtime} · {statusLabel(agent.status)}
           </p>
         </div>
-        <button onClick={onClose}>
+        <button aria-label="关闭执行详情" onClick={onClose}>
           <X />
         </button>
       </header>
@@ -771,7 +977,7 @@ function AgentInspector({
           <div className="empty">
             <Terminal />
             <h3>尚无 Run</h3>
-            <p>在 Team Chat 中给这个 Agent 发送任务。</p>
+            <p>在协作动态中向这名 Agent 发送指令。</p>
           </div>
         )}
       </div>
@@ -873,7 +1079,7 @@ function WorkflowView({
         <span className="chip">当前阶段</span>
         <h2>{current.name}</h2>
         <p>{current.goal}</p>
-        <h4>当前 Task</h4>
+        <h4>当前子任务</h4>
         <div className="task-state-list">
           {tasks.length ? (
             tasks.map((task) => (
@@ -889,7 +1095,7 @@ function WorkflowView({
             <p>Scheduler 会自动按当前 Workflow 阶段选择 Agent 并建立 Task。</p>
           )}
         </div>
-        <h4>Blocking Issues</h4>
+        <h4>阻塞问题</h4>
         <div className="issue-list">
           {issues.length ? (
             issues.map((issue) => (
@@ -911,7 +1117,7 @@ function WorkflowView({
           <FileText />
           {current.deliverable}
         </div>
-        <h4>Exit Criteria</h4>
+        <h4>验收要求</h4>
         {current.exitCriteria.map((item) => (
           <label key={item}>
             <input
@@ -925,9 +1131,9 @@ function WorkflowView({
             {item}
           </label>
         ))}
-        <h4>Human Mode</h4>
+        <h4>人工参与方式</h4>
         <span className="human-mode">{current.humanMode}</span>
-        <h4>Active Runs</h4>
+        <h4>正在执行</h4>
         <p>
           {active.length
             ? `${active.length} 个 Agent 正在执行`
@@ -950,23 +1156,53 @@ function WorkflowView({
 
 function ArtifactView({
   change,
+  initialArtifactId,
 }: {
   change: Change;
+  initialArtifactId?: string;
 }): import("react").JSX.Element {
   const { snapshot, notify } = useAppStore();
   const artifacts = snapshot.artifacts.filter((a) => a.changeId === change.id);
-  const [selected, setSelected] = useState(artifacts[0]?.id);
-  const artifact = artifacts.find((a) => a.id === selected) || artifacts[0];
-  async function approve(value: boolean): Promise<void> {
-    if (!artifact) return;
+  const [selected, setSelected] = useState(initialArtifactId);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [reviewNotice, setReviewNotice] = useState("");
+  const artifact =
+    artifacts.find((a) => a.id === selected) ||
+    artifacts.find((a) => a.status === "REVIEW") ||
+    artifacts[0];
+  async function approve(value: boolean, advance = false): Promise<void> {
+    if (!artifact || busy) return;
+    if (!value && !feedback.trim()) {
+      setReviewNotice("请填写修改意见，帮助团队明确返工要求。");
+      return;
+    }
+    setBusy(true);
+    setReviewNotice("");
+    let saved = false;
     try {
-      await window.moxt.approveArtifact(artifact.id, value);
-      notify(
-        "success",
-        value ? "Artifact 已批准并成为 Current Truth" : "Artifact 已退回修改",
+      await window.moxt.approveArtifact(
+        artifact.id,
+        value,
+        feedback.trim() || undefined,
       );
+      saved = true;
+      if (advance) await window.moxt.advanceWorkflow(change.id);
+      const message = value
+        ? advance
+          ? "方案已批准，阶段校验通过并继续执行"
+          : "方案已批准，可在执行流程中继续推进"
+        : "已退回修改并记录意见";
+      setReviewNotice(message);
+      notify("success", message);
     } catch (error) {
-      notify("error", errorText(error));
+      const message = saved
+        ? `审批已保存，阶段尚未推进：${errorText(error)}`
+        : errorText(error);
+      setReviewNotice(message);
+      notify("error", message);
+    } finally {
+      setBusy(false);
     }
   }
   return (
@@ -976,7 +1212,12 @@ function ArtifactView({
         {artifacts.map((item) => (
           <button
             className={item.id === artifact?.id ? "active" : ""}
-            onClick={() => setSelected(item.id)}
+            disabled={busy}
+            onClick={() => {
+              setSelected(item.id);
+              setFeedback("");
+              setReviewNotice("");
+            }}
             key={item.id}
           >
             <FileText />
@@ -1001,19 +1242,66 @@ function ArtifactView({
               </h2>
             </div>
             <div>
-              <button className="secondary" onClick={() => void approve(false)}>
+              <button
+                className="secondary"
+                disabled={busy || artifact.status === "DEPRECATED"}
+                onClick={() => void approve(false)}
+              >
                 退回修改
               </button>
               <button
                 className="primary"
                 onClick={() => void approve(true)}
-                disabled={artifact.status === "APPROVED"}
+                disabled={
+                  busy ||
+                  artifact.status === "APPROVED" ||
+                  artifact.status === "DEPRECATED"
+                }
               >
                 <Check />
-                批准
+                仅批准
               </button>
             </div>
           </header>
+          <div className="review-actions">
+            <label>
+              审阅意见
+              <textarea
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                placeholder="退回时请写明需要调整的内容"
+                disabled={busy}
+              />
+            </label>
+            {change.status === "WAITING_HUMAN" &&
+              artifact.status === "REVIEW" && (
+                <button
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => void approve(true, true)}
+                >
+                  {busy ? "正在校验…" : "批准并继续执行"}
+                </button>
+              )}
+            <p role="status">
+              {reviewNotice ||
+                "批准针对当前文档；阶段推进仍需满足验收证据与阻塞检查。"}
+            </p>
+            <details>
+              <summary>查看本任务验收证据</summary>
+              {snapshot.runs
+                .filter((r) => r.changeId === change.id)
+                .flatMap((r) => r.evidence)
+                .map((e) => (
+                  <div className="review-evidence" key={e.id}>
+                    <strong>
+                      {statusLabel(e.status)} · {e.title}
+                    </strong>
+                    <p>{e.detail}</p>
+                  </div>
+                ))}
+            </details>
+          </div>
           <div className="markdown">
             <ReactMarkdown>{artifact.content}</ReactMarkdown>
           </div>
@@ -1021,7 +1309,7 @@ function ArtifactView({
       ) : (
         <div className="empty">
           <FileText />
-          <h3>暂无 Artifact</h3>
+          <h3>暂无交付物</h3>
           <p>
             Agent 产出 Proposal、Contract 或 Report
             后会自动进入这里，等待版本化评审。
