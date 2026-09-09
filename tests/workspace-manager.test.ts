@@ -40,6 +40,7 @@ describe("workspace permission and worktree isolation", () => {
     }).trim();
     const change = {
       id: "change-1",
+      roomId: "room-1",
       number: 1024,
       title: "x",
       description: "x",

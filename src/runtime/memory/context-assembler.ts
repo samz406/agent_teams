@@ -6,6 +6,8 @@ import type {
   SkillVersion,
   WorkOrder,
 } from "../../shared/contracts";
+import type { RoomRuntimeContext } from "../room-runtime";
+import { formatRoomContext } from "../room-runtime";
 
 export interface AssembledContext {
   prompt: string;
@@ -20,6 +22,7 @@ export function assembleContext(
   workOrder: WorkOrder,
   memories: MemoryEntry[],
   skills: SkillVersion[],
+  roomRuntime?: RoomRuntimeContext,
   budgetTokens = 12_000,
 ): AssembledContext {
   const query =
@@ -74,14 +77,23 @@ export function assembleContext(
       sourceId: item.sourceId,
     })),
     skills: skills.map((item) => ({ id: item.id, checksum: item.checksum })),
+    room: roomRuntime
+      ? {
+          roomId: roomRuntime.room.id,
+          contextId: roomRuntime.context.id,
+          contextVersion: roomRuntime.context.version,
+          memberId: roomRuntime.member.id,
+          permissions: roomRuntime.permissions,
+        }
+      : null,
   };
   return {
-    prompt,
+    prompt: roomRuntime ? `${formatRoomContext(roomRuntime)}\n\n${prompt}` : prompt,
     memoryIds: selected.map((item) => item.item.id),
     skillVersionIds: skills.map((item) => item.id),
     evidence: {
       type: "CONTEXT",
-      title: `${selected.length} 条记忆 · ${skills.length} 个 Skill`,
+      title: `${roomRuntime ? `Room Context v${roomRuntime.context.version} · ` : ""}${selected.length} 条记忆 · ${skills.length} 个 Skill`,
       status: "PASS",
       detail: JSON.stringify(detail),
     },
@@ -89,9 +101,13 @@ export function assembleContext(
 }
 
 function scoreMemory(item: MemoryEntry, query: string): number {
-  const scope = { ROLE: 1, PROJECT: 0.8, WORKFLOW: 0.6, EPISODE: 0.5 }[
-    item.scope
-  ];
+  const scope = {
+    ROLE: 1,
+    ROOM: 0.9,
+    PROJECT: 0.8,
+    WORKFLOW: 0.6,
+    EPISODE: 0.5,
+  }[item.scope];
   const kind = {
     RULE: 1,
     DECISION: 0.7,

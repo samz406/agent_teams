@@ -12,6 +12,10 @@ interface AppState {
 }
 
 const empty: AppSnapshot = {
+  rooms: [],
+  roomMembers: [],
+  roomContexts: [],
+  roomEvents: [],
   changes: [],
   agents: [],
   workspaces: [],

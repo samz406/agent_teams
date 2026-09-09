@@ -1,7 +1,53 @@
 {
+  "rooms": [
+    {
+      "id": "room",
+      "name": "设计资产预览",
+      "goal": "统一预览入口与接口边界",
+      "kind": "PROJECT",
+      "status": "ACTIVE",
+      "policy": {
+        "permissions": { "read": true, "write": true, "shell": true, "git": true, "network": true },
+        "skillVersionIds": [],
+        "allowAgentDelegation": true,
+        "responseMode": "MENTION_ONLY",
+        "maxAgentTurns": 20
+      },
+      "createdAt": "2026-09-06T06:38:26.094Z",
+      "updatedAt": "2026-09-06T06:38:26.094Z"
+    }
+  ],
+  "roomMembers": [
+    {
+      "id": "room-agent",
+      "roomId": "room",
+      "subjectType": "AGENT",
+      "subjectId": "a",
+      "role": "AGENT",
+      "permissions": { "read": true, "write": true, "shell": true, "git": true, "network": true },
+      "canInstruct": true,
+      "canApprove": false,
+      "createdAt": "2026-09-06T06:38:26.094Z"
+    }
+  ],
+  "roomContexts": [
+    {
+      "id": "room-context",
+      "roomId": "room",
+      "version": 1,
+      "summary": "",
+      "facts": [],
+      "decisions": [],
+      "constraints": [],
+      "openQuestions": [],
+      "updatedAt": "2026-09-06T06:38:26.094Z"
+    }
+  ],
+  "roomEvents": [],
   "changes": [
     {
       "id": "c",
+      "roomId": "room",
       "number": 128,
       "title": "设计资产预览架构",
       "description": "统一预览入口，明确接口边界。\n验收：加载与失败恢复路径可验证。",
@@ -22,6 +68,7 @@
     },
     {
       "id": "running",
+      "roomId": "room",
       "number": 129,
       "title": "修复工作流模板详情页",
       "description": "统一预览入口，明确接口边界。\n验收：加载与失败恢复路径可验证。",
@@ -42,6 +89,7 @@
     },
     {
       "id": "old",
+      "roomId": "room",
       "number": 128,
       "title": "设计资产预览架构",
       "description": "统一预览入口，明确接口边界。\n验收：加载与失败恢复路径可验证。",
@@ -196,6 +244,7 @@
   "workOrders": [
     {
       "id": "order",
+      "roomId": "room",
       "number": 12,
       "title": "每日接口检查",
       "goal": "检查接口变更",

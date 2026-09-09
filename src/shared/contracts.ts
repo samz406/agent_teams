@@ -50,7 +50,7 @@ export type ConversationStatus =
 export type ConversationStopReason =
   "MAX_ROUNDS" | "USER_ENDED" | "ERROR" | null;
 export type AgentProfileStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "ARCHIVED";
-export type MemoryScope = "ROLE" | "PROJECT" | "EPISODE" | "WORKFLOW";
+export type MemoryScope = "ROLE" | "ROOM" | "PROJECT" | "EPISODE" | "WORKFLOW";
 export type MemoryKind =
   "RULE" | "PREFERENCE" | "FACT" | "SOURCE" | "DECISION" | "LESSON" | "FAILURE";
 export type MemoryStatus =
@@ -69,6 +69,66 @@ export type WorkOrderStatus =
   | "CANCELLED";
 export type ScheduleMisfirePolicy = "SKIP" | "RUN_ONCE" | "RUN_ALL_BOUNDED";
 export type ScheduleConcurrencyPolicy = "SKIP" | "QUEUE" | "REPLACE";
+
+export type RoomKind = "PROJECT" | "DISCUSSION" | "OPERATIONS";
+export type RoomStatus = "ACTIVE" | "ARCHIVED";
+export type RoomMemberRole = "OWNER" | "MEMBER" | "AGENT";
+export type RoomResponseMode = "AUTONOMOUS" | "MENTION_ONLY" | "MANUAL";
+
+export interface RoomPolicy {
+  permissions: PermissionSet;
+  skillVersionIds: string[];
+  allowAgentDelegation: boolean;
+  responseMode: RoomResponseMode;
+  maxAgentTurns: number;
+}
+
+export interface Room {
+  id: string;
+  name: string;
+  goal: string;
+  kind: RoomKind;
+  status: RoomStatus;
+  policy: RoomPolicy;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RoomMember {
+  id: string;
+  roomId: string;
+  subjectType: "HUMAN" | "AGENT";
+  subjectId: string;
+  role: RoomMemberRole;
+  permissions: PermissionSet;
+  canInstruct: boolean;
+  canApprove: boolean;
+  createdAt: string;
+}
+
+export interface RoomContext {
+  id: string;
+  roomId: string;
+  version: number;
+  summary: string;
+  facts: string[];
+  decisions: string[];
+  constraints: string[];
+  openQuestions: string[];
+  updatedAt: string;
+}
+
+export interface RoomEvent {
+  id: string;
+  roomId: string;
+  actorType: "HUMAN" | "AGENT" | "SYSTEM";
+  actorId: string | null;
+  type: string;
+  subjectType: "ROOM" | "CHANGE" | "CONVERSATION" | "WORK_ORDER" | "RUN";
+  subjectId: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
 
 export interface RuntimeInfo {
   type: RuntimeType;
@@ -190,6 +250,7 @@ export interface WorkflowPhase {
 
 export interface Change {
   id: string;
+  roomId: string;
   number: number;
   title: string;
   description: string;
@@ -376,6 +437,7 @@ export interface OutputContract {
 
 export interface WorkOrder {
   id: string;
+  roomId: string;
   number: number;
   title: string;
   goal: string;
@@ -478,6 +540,7 @@ export interface Artifact {
 
 export interface Conversation {
   id: string;
+  roomId: string;
   number: number;
   title: string;
   topic: string;
@@ -575,6 +638,10 @@ export interface ConversationDeliverable {
 }
 
 export interface AppSnapshot {
+  rooms: Room[];
+  roomMembers: RoomMember[];
+  roomContexts: RoomContext[];
+  roomEvents: RoomEvent[];
   changes: Change[];
   agents: Agent[];
   workspaces: Workspace[];
@@ -607,6 +674,7 @@ export interface AppSnapshot {
 }
 
 export interface CreateChangeInput {
+  roomId?: string | null;
   title: string;
   description: string;
   workflowType: WorkflowType;
@@ -631,6 +699,7 @@ export interface UpdateAgentInput extends CreateAgentInput {
 }
 
 export interface CreateConversationInput {
+  roomId?: string | null;
   title: string;
   topic: string;
   background: string;
@@ -673,6 +742,7 @@ export interface CreateSkillInput {
   failurePolicy: string;
 }
 export interface CreateWorkOrderInput {
+  roomId?: string | null;
   title: string;
   goal: string;
   ownerAgentId: string;
@@ -703,6 +773,24 @@ export interface CreateScheduleInput {
   maxCatchUpRuns: number;
 }
 
+export interface CreateRoomInput {
+  name: string;
+  goal: string;
+  kind: RoomKind;
+  policy?: Partial<Omit<RoomPolicy, "permissions">> & {
+    permissions?: Partial<PermissionSet>;
+  };
+  agentIds?: string[];
+}
+
+export interface UpdateRoomContextInput {
+  summary: string;
+  facts: string[];
+  decisions: string[];
+  constraints: string[];
+  openQuestions: string[];
+}
+
 export type RuntimeEvent =
   | { type: "snapshot.changed"; snapshot: AppSnapshot }
   | {
@@ -722,6 +810,12 @@ export type RuntimeEvent =
 
 export interface DesktopApi {
   getSnapshot(): Promise<AppSnapshot>;
+  createRoom(input: CreateRoomInput): Promise<Room>;
+  updateRoomPolicy(roomId: string, policy: RoomPolicy): Promise<Room>;
+  updateRoomContext(
+    roomId: string,
+    input: UpdateRoomContextInput,
+  ): Promise<RoomContext>;
   selectWorkspace(): Promise<Workspace | null>;
   createChange(input: CreateChangeInput): Promise<Change>;
   startChange(changeId: string, reason?: string): Promise<void>;
@@ -791,6 +885,13 @@ export interface DesktopApi {
 
 export type RuntimeRequest =
   | { type: "snapshot.get" }
+  | { type: "room.create"; input: CreateRoomInput }
+  | { type: "room.policy.update"; roomId: string; policy: RoomPolicy }
+  | {
+      type: "room.context.update";
+      roomId: string;
+      input: UpdateRoomContextInput;
+    }
   | { type: "workspace.add"; workspace: Omit<Workspace, "id" | "createdAt"> }
   | { type: "change.create"; input: CreateChangeInput }
   | { type: "change.kick"; changeId: string; reason?: string }

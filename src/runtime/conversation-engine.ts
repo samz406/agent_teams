@@ -8,6 +8,7 @@ import type {
   ConversationMemory,
   ConversationParticipant,
   ConversationTurn,
+  PermissionSet,
   RuntimeInfo,
 } from "../shared/contracts";
 import type { AppDatabase } from "../main/database";
@@ -15,6 +16,7 @@ import { extractTokenUsage } from "../main/runtime/parser";
 import { extractUsageSummary } from "../shared/usage";
 import { AdapterRegistry, type RuntimeAdapter } from "./adapters";
 import { RuntimeQueue } from "./runtime-queue";
+import { evaluateRoomPermissions, formatRoomContext } from "./room-runtime";
 
 type ChatResult = {
   content: string;
@@ -36,6 +38,7 @@ export interface ConversationExecutor {
     agent: Agent,
     turnId: string,
     prompt: string,
+    permissions: PermissionSet,
   ): Promise<ChatResult>;
   cancel(conversationId: string, force: boolean): Promise<void>;
   shutdown(): Promise<void>;
@@ -66,6 +69,7 @@ export class AdapterConversationExecutor implements ConversationExecutor {
     agent: Agent,
     turnId: string,
     prompt: string,
+    permissions: PermissionSet,
   ): Promise<ChatResult> {
     const adapter = this.registry.get(agent.runtime);
     const detected = adapter.detect(this.runtimes());
@@ -88,13 +92,7 @@ export class AdapterConversationExecutor implements ConversationExecutor {
             executable,
             prompt,
             cwd,
-            permissions: {
-              read: true,
-              write: false,
-              shell: true,
-              git: true,
-              network: true,
-            },
+            permissions,
             nativeSessionId: participant.nativeSessionId,
             argsTemplate: agent.argsTemplate,
           };
@@ -304,6 +302,7 @@ export class ConversationEngine {
     if (!leader) throw new Error("讨论没有 Leader");
     const agent = this.db.getAgent(leader.agentId);
     if (!agent) throw new Error("Leader Agent 不存在");
+    const roomRuntime = this.roomRuntime(conversation, agent);
     const turn = this.db.createConversationTurn({
       conversationId,
       roundId: null,
@@ -323,7 +322,8 @@ export class ConversationEngine {
         { ...leader, nativeSessionId: null },
         agent,
         turn.id,
-        this.summaryPrompt(conversation, type),
+        `${formatRoomContext(roomRuntime)}\n\n${this.summaryPrompt(conversation, type)}`,
+        roomRuntime.permissions,
       );
       this.db.updateConversationTurn(turn.id, {
         status: "COMPLETED",
@@ -470,6 +470,7 @@ export class ConversationEngine {
   ): Promise<boolean> {
     const agent = this.db.getAgent(participant.agentId);
     if (!agent) return false;
+    const roomRuntime = this.roomRuntime(conversation, agent);
     const speakerType = participant.isLeader ? "leader" : "agent";
     const turn = this.db.createConversationTurn({
       conversationId: conversation.id,
@@ -499,7 +500,8 @@ export class ConversationEngine {
         participant,
         agent,
         turn.id,
-        prompt,
+        `${formatRoomContext(roomRuntime)}\n\n${prompt}`,
+        roomRuntime.permissions,
       );
       this.db.updateConversationParticipantSession(
         participant.id,
@@ -634,6 +636,13 @@ export class ConversationEngine {
       openQuestions,
       userPreferences: memory.userPreferences,
     });
+    const conversation = this.requireConversation(conversationId);
+    this.db.mergeRoomContext(conversation.roomId, {
+      summary,
+      decisions: consensus,
+      constraints: disagreements,
+      openQuestions,
+    });
   }
 
   private nextFocus(conversation: Conversation): string {
@@ -677,7 +686,18 @@ export class ConversationEngine {
   }
 
   private limitReached(value: Conversation): boolean {
-    return value.currentRound >= value.maxRounds;
+    const room = this.db.getRoom(value.roomId);
+    const completedAgentTurns = this.db
+      .getConversationTurns(value.id)
+      .filter(
+        (turn) =>
+          turn.status === "COMPLETED" &&
+          (turn.speakerType === "agent" || turn.speakerType === "leader"),
+      ).length;
+    return (
+      value.currentRound >= value.maxRounds ||
+      completedAgentTurns >= (room?.policy.maxAgentTurns ?? 50)
+    );
   }
   private readyToSummarize(conversation: Conversation): void {
     this.db.updateConversationStatus(
@@ -704,6 +724,29 @@ export class ConversationEngine {
     const value = this.db.getConversation(id);
     if (!value) throw new Error("讨论不存在");
     return value;
+  }
+
+  private roomRuntime(conversation: Conversation, agent: Agent) {
+    const room = this.db.getRoom(conversation.roomId);
+    const context = this.db.getRoomContext(conversation.roomId);
+    const member = this.db.getRoomMember(conversation.roomId, agent.id);
+    if (!room || !context) throw new Error("讨论空间或空间上下文不存在");
+    const skills = room.policy.skillVersionIds
+      .map((id) => this.db.getSkillVersion(id))
+      .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill));
+    if (
+      skills.length !== room.policy.skillVersionIds.length ||
+      skills.some((skill) => skill.status !== "VERIFIED")
+    )
+      throw new Error("空间绑定的 SkillVersion 不存在或尚未发布");
+    const permissions = evaluateRoomPermissions(agent, room, member, {
+      read: true,
+      write: false,
+      shell: true,
+      git: true,
+      network: true,
+    });
+    return { room, context, member: member!, permissions, skills };
   }
 }
 

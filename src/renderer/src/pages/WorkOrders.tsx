@@ -24,6 +24,7 @@ export default function WorkOrders({
     title: "",
     goal: "",
     ownerAgentId: snapshot.agents[0]?.id ?? "",
+    roomId: "",
     workspaceId: "",
     skillVersionId: "",
     input: "{}",
@@ -44,6 +45,7 @@ export default function WorkOrders({
           : []),
       ];
       const order = await window.moxt.createWorkOrder({
+        roomId: form.roomId || null,
         title: form.title,
         goal: form.goal,
         ownerAgentId: form.ownerAgentId,
@@ -214,7 +216,25 @@ export default function WorkOrders({
                 />
               </label>
               <label>
-                项目空间（可选）
+                协作空间（可选）
+                <select
+                  value={form.roomId}
+                  onChange={(e) =>
+                    setForm({ ...form, roomId: e.target.value })
+                  }
+                >
+                  <option value="">为此工作单创建新空间</option>
+                  {snapshot.rooms
+                    .filter((room) => room.status === "ACTIVE")
+                    .map((room) => (
+                      <option value={room.id} key={room.id}>
+                        {room.name} · {room.kind}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                本地 Workspace（可选）
                 <select
                   value={form.workspaceId}
                   onChange={(e) =>

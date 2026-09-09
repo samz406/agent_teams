@@ -96,6 +96,8 @@ describe("conversation engine", () => {
       costUsd: 0.001,
       model: "test-model",
     });
+    expect(executor.calls[0].prompt).toContain("Room Context");
+    expect(db.getRoomContext(conversation.roomId)?.decisions.length).toBeGreaterThan(0);
   });
 
   it("keeps one native session per participant and sends only unseen shared turns on resume", async () => {

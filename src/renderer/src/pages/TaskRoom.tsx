@@ -34,6 +34,7 @@ import {
 import { errorText, useAppStore } from "../store";
 import { taskSummary } from "../workbench";
 import { statusLabel } from "../status-labels";
+import RoomSettingsDialog from "../components/RoomSettingsDialog";
 
 type Tab = "chat" | "workflow" | "artifacts";
 
@@ -80,6 +81,7 @@ export default function TaskRoom({
     [mentionQuery, team],
   );
   const taskUsage = aggregateRunUsage(runs, live);
+  const room = snapshot.rooms.find((item) => item.id === change.roomId);
 
   async function send(): Promise<void> {
     if (!text.trim() || sending) return;
@@ -175,6 +177,7 @@ export default function TaskRoom({
         <div>
           <div className="eyebrow">
             任务 #{change.number} · {WORKFLOW_LABELS[change.workflowType].name}
+            {room ? ` · ${room.name}` : ""}
           </div>
           <h1>{change.title}</h1>
           <details className="task-goal">
@@ -183,6 +186,7 @@ export default function TaskRoom({
           </details>
         </div>
         <div className="room-actions">
+          <RoomSettingsDialog roomId={change.roomId} />
           <div className="usage-meter">
             <button
               className="usage-pill"

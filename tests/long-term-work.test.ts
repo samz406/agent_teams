@@ -36,7 +36,7 @@ describe("long-term role, memory and work-order persistence", () => {
       ),
     ).toBe(true);
     const raw = new Sqlite(path, { readonly: true });
-    expect(raw.pragma("user_version", { simple: true })).toBe(3);
+    expect(raw.pragma("user_version", { simple: true })).toBe(4);
     raw.close();
   });
 

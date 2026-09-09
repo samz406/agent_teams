@@ -28,6 +28,7 @@ export default function NewTask({
     description: "",
     acceptance: "",
     tags: "",
+    roomId: "",
   });
   const [workspaceIds, setWorkspaceIds] = useState<string[]>([]);
   const [agentIds, setAgentIds] = useState<string[]>([]);
@@ -112,6 +113,7 @@ export default function NewTask({
         return;
       }
       const result = await window.moxt.createChange({
+        roomId: form.roomId || null,
         title: form.title.trim(),
         description: `${form.description.trim()}\n\n## 验收标准\n${form.acceptance.trim()}`,
         workflowType: workflow,
@@ -171,6 +173,22 @@ export default function NewTask({
               </div>
             </div>
             <div className="form-grid">
+              <label className="full">
+                协作空间（可选）
+                <select
+                  value={form.roomId}
+                  onChange={(e) => setForm({ ...form, roomId: e.target.value })}
+                >
+                  <option value="">为此任务创建新空间</option>
+                  {snapshot.rooms
+                    .filter((room) => room.status === "ACTIVE")
+                    .map((room) => (
+                      <option value={room.id} key={room.id}>
+                        {room.name} · {room.kind}
+                      </option>
+                    ))}
+                </select>
+              </label>
               <label className="full">
                 任务标题
                 <input

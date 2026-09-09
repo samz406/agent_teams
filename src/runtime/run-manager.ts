@@ -17,6 +17,7 @@ import { AdapterRegistry } from "./adapters";
 import { EvidenceService } from "./evidence-service";
 import { LeaderEngine } from "./leader-engine";
 import { RuntimeQueue } from "./runtime-queue";
+import { evaluateRoomPermissions, formatRoomContext } from "./room-runtime";
 import { WorkspaceManager } from "./workspace-manager";
 
 type Publish = (event: RuntimeEvent) => void;
@@ -257,10 +258,28 @@ export class TeamRunManager {
     if (!workspace || !workstream)
       throw new Error("Workspace 或 Workstream 不存在");
     const phase = WORKFLOWS[change.workflowType][change.currentPhase];
-    const effectivePermissions: PermissionSet = {
+    const phasePermissions: PermissionSet = {
       ...binding.permissions,
       write: binding.permissions.write && writablePhases.has(phase.id),
     };
+    const room = this.db.getRoom(change.roomId);
+    const roomContext = this.db.getRoomContext(change.roomId);
+    const roomMember = this.db.getRoomMember(change.roomId, agent.id);
+    if (!room || !roomContext) throw new Error("任务空间或空间上下文不存在");
+    const roomSkills = room.policy.skillVersionIds
+      .map((id) => this.db.getSkillVersion(id))
+      .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill));
+    if (
+      roomSkills.length !== room.policy.skillVersionIds.length ||
+      roomSkills.some((skill) => skill.status !== "VERIFIED")
+    )
+      throw new Error("空间绑定的 SkillVersion 不存在或尚未发布");
+    const effectivePermissions = evaluateRoomPermissions(
+      agent,
+      room,
+      roomMember,
+      phasePermissions,
+    );
     const prepared = await this.workspaces.prepare(
       change,
       workspace,
@@ -296,7 +315,13 @@ export class TeamRunManager {
       agentSessionId: session.id,
       parentRunId: options.parentRunId ?? null,
       status: "QUEUED",
-      prompt,
+      prompt: `${formatRoomContext({
+        room,
+        context: roomContext,
+        member: roomMember!,
+        permissions: effectivePermissions,
+        skills: roomSkills,
+      })}\n\n${prompt}`,
       runtime: agent.runtime,
       executable,
       workspacePath: prepared.cwd,
@@ -312,6 +337,18 @@ export class TeamRunManager {
       evidence: [],
     };
     this.db.createRun(run);
+    this.db.addEvidence(run.id, {
+      type: "CONTEXT",
+      title: `Room Context v${roomContext.version}`,
+      status: "PASS",
+      detail: JSON.stringify({
+        roomId: room.id,
+        roomContextId: roomContext.id,
+        roomContextVersion: roomContext.version,
+        roomMemberId: roomMember!.id,
+        permissions: effectivePermissions,
+      }),
+    });
     this.db.updateTask(task.id, "QUEUED", id);
     if (options.resumeNative) this.resumeRuns.add(id);
     this.publish({ type: "run.status", runId: id, status: "QUEUED" });
@@ -662,6 +699,8 @@ export class TeamRunManager {
     if (!parentRun.changeId) return;
     const change = this.db.getChange(parentRun.changeId);
     if (!change) return;
+    const room = this.db.getRoom(change.roomId);
+    if (!room?.policy.allowAgentDelegation) return;
     for (const action of extractTeamActions(response)) {
       const target = this.db
         .snapshot(this.runtimes)

@@ -30,6 +30,7 @@ import {
   type ConversationMention,
 } from "../../../shared/conversation-templates";
 import { errorText, useAppStore } from "../store";
+import RoomSettingsDialog from "../components/RoomSettingsDialog";
 
 interface Props {
   conversation: Conversation;
@@ -75,6 +76,7 @@ export default function ConversationRoom({
         )
         .slice(0, 6)
     : [];
+  const room = snapshot.rooms.find((item) => item.id === conversation.roomId);
 
   async function control(
     action: "start" | "pause" | "resume" | "end",
@@ -187,11 +189,13 @@ export default function ConversationRoom({
         <div>
           <div className="eyebrow">
             团队讨论 #{conversation.number} · {modeName(conversation.mode)}
+            {room ? ` · ${room.name}` : ""}
           </div>
           <h1>{conversation.title}</h1>
           <p>{conversation.topic}</p>
         </div>
         <div className="conversation-controls">
+          <RoomSettingsDialog roomId={conversation.roomId} />
           <span
             className={`conversation-status ${conversation.status.toLowerCase()}`}
           >

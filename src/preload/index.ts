@@ -4,17 +4,25 @@ import type {
   CreateChangeInput,
   CreateConversationInput,
   CreateMemoryInput,
+  CreateRoomInput,
   CreateScheduleInput,
   CreateSkillInput,
   CreateWorkOrderInput,
   DesktopApi,
+  RoomPolicy,
   RuntimeEvent,
   UpdateAgentInput,
+  UpdateRoomContextInput,
   UpsertAgentProfileInput,
 } from "../shared/contracts";
 
 const api: DesktopApi = {
   getSnapshot: () => ipcRenderer.invoke("app:snapshot"),
+  createRoom: (input: CreateRoomInput) => ipcRenderer.invoke("room:create", input),
+  updateRoomPolicy: (roomId: string, policy: RoomPolicy) =>
+    ipcRenderer.invoke("room:policy-update", roomId, policy),
+  updateRoomContext: (roomId: string, input: UpdateRoomContextInput) =>
+    ipcRenderer.invoke("room:context-update", roomId, input),
   selectWorkspace: () => ipcRenderer.invoke("workspace:select"),
   createChange: (input: CreateChangeInput) =>
     ipcRenderer.invoke("change:create", input),

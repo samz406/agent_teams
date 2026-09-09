@@ -13,6 +13,58 @@ afterEach(() => {
 });
 
 describe("transactional local persistence", () => {
+  it("shares one room, context and membership across work item types", () => {
+    const directory = mkdtempSync(join(tmpdir(), "agent-teams-room-"));
+    paths.push(directory);
+    const db = new AppDatabase(join(directory, "room.db"));
+    const agents = db.snapshot([]).agents.slice(0, 2);
+    const room = db.createRoom({
+      name: "发布空间",
+      goal: "完成一次可验证发布",
+      kind: "PROJECT",
+      agentIds: agents.map((agent) => agent.id),
+    });
+    db.updateRoomContext(room.id, {
+      summary: "发布准备中",
+      facts: ["主分支为 main"],
+      decisions: ["先跑回归"],
+      constraints: ["不得跳过审查"],
+      openQuestions: ["发布时间？"],
+    });
+    const conversation = db.createConversation({
+      roomId: room.id,
+      title: "发布评审",
+      topic: "是否可以发布",
+      background: "",
+      mode: "roundtable",
+      maxRounds: 1,
+      participants: agents.map((agent, index) => ({
+        agentId: agent.id,
+        roleName: index ? "评审" : "主持人",
+        rolePrompt: "给出证据",
+        isLeader: index === 0,
+      })),
+    });
+    const order = db.createWorkOrder({
+      roomId: room.id,
+      title: "发布检查",
+      goal: "检查发布条件",
+      ownerAgentId: agents[0].id,
+    });
+    const snapshot = db.snapshot([]);
+    expect(conversation.roomId).toBe(room.id);
+    expect(order.roomId).toBe(room.id);
+    expect(snapshot.roomContexts.find((item) => item.roomId === room.id)).toMatchObject({
+      summary: "发布准备中",
+      decisions: ["先跑回归"],
+    });
+    expect(
+      snapshot.roomMembers.filter(
+        (item) => item.roomId === room.id && item.subjectType === "AGENT",
+      ),
+    ).toHaveLength(2);
+  });
+
   it("persists changes, messages, artifacts and evidence lineage", () => {
     const directory = mkdtempSync(join(tmpdir(), "moxt-test-"));
     paths.push(directory);
@@ -167,6 +219,8 @@ describe("transactional local persistence", () => {
     const migrated = new AppDatabase(databasePath);
     const restored = migrated.snapshot([]);
     expect(restored.conversations[0].stopReason).toBe("MAX_ROUNDS");
+    expect(restored.conversations[0].roomId).toBeTruthy();
+    expect(restored.rooms).toHaveLength(1);
     expect(restored.conversationTurns[0]).toMatchObject({
       sequence: 1,
       totalTokens: 30,

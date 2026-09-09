@@ -38,6 +38,7 @@ const agent = {
 };
 const change = {
   id: "c",
+  roomId: "room",
   number: 128,
   title: "设计资产预览架构",
   description: "统一预览入口，明确接口边界。\n验收：加载与失败恢复路径可验证。",
@@ -54,6 +55,10 @@ const change = {
 };
 const snapshot = Object.fromEntries(
   [
+    "rooms",
+    "roomMembers",
+    "roomContexts",
+    "roomEvents",
     "changes",
     "agents",
     "workspaces",
@@ -86,6 +91,50 @@ const snapshot = Object.fromEntries(
   ].map((k) => [k, []]),
 );
 Object.assign(snapshot, {
+  rooms: [
+    {
+      id: "room",
+      name: "设计资产预览",
+      goal: "统一预览入口与接口边界",
+      kind: "PROJECT",
+      status: "ACTIVE",
+      policy: {
+        permissions: { ...permissions, write: true, network: true },
+        skillVersionIds: [],
+        allowAgentDelegation: true,
+        responseMode: "MENTION_ONLY",
+        maxAgentTurns: 20,
+      },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+  ],
+  roomMembers: [
+    {
+      id: "room-agent",
+      roomId: "room",
+      subjectType: "AGENT",
+      subjectId: "a",
+      role: "AGENT",
+      permissions,
+      canInstruct: true,
+      canApprove: false,
+      createdAt: timestamp,
+    },
+  ],
+  roomContexts: [
+    {
+      id: "room-context",
+      roomId: "room",
+      version: 1,
+      summary: "等待架构评审",
+      facts: ["主分支为 main"],
+      decisions: [],
+      constraints: ["保持接口兼容"],
+      openQuestions: [],
+      updatedAt: timestamp,
+    },
+  ],
   changes: [
     change,
     {
@@ -211,6 +260,7 @@ Object.assign(snapshot, {
   workOrders: [
     {
       id: "order",
+      roomId: "room",
       number: 12,
       title: "每日接口检查",
       goal: "检查接口变更",
@@ -256,6 +306,20 @@ const calls = [];
 let rejectAdvance = true;
 ipcMain.handle("app:snapshot", () => snapshot);
 ipcMain.handle("runtime:detect", () => snapshot.runtimes);
+ipcMain.handle("room:policy-update", (_e, roomId, policy) => {
+  calls.push(["room-policy", roomId, policy]);
+  snapshot.rooms[0].policy = policy;
+  publish();
+  return snapshot.rooms[0];
+});
+ipcMain.handle("room:context-update", (_e, roomId, context) => {
+  calls.push(["room-context", roomId, context]);
+  Object.assign(snapshot.roomContexts[0], context, {
+    version: snapshot.roomContexts[0].version + 1,
+  });
+  publish();
+  return snapshot.roomContexts[0];
+});
 ipcMain.handle("artifact:approve", (_e, id, approve, feedback) => {
   calls.push(["approve", id, approve, feedback]);
   snapshot.artifacts[0].status = approve ? "APPROVED" : "DRAFT";
@@ -373,6 +437,16 @@ async function main() {
       await click("去处理");
       await fits("review " + width);
       if (width === 1440) await screenshot("task-review");
+      if (width === 1440) {
+        await click("空间设置");
+        await fits("room settings");
+        await screenshot("room-settings");
+        await click("保存空间设置");
+        assert.deepEqual(
+          calls.slice(-2).map((call) => call[0]),
+          ["room-policy", "room-context"],
+        );
+      }
       await click("协作动态");
       await fits("chat " + width);
       await click("执行流程", ".room-tabs button");
@@ -454,7 +528,7 @@ async function main() {
     assert.match(create.description, /验收标准/);
     assert.deepEqual(errors, []);
     console.log(
-      "UI smoke passed: 3 viewport widths, 10 page states, review partial failure, drawer Escape, goal-first creation and binding recovery.",
+      "UI smoke passed: 3 viewport widths, 11 page states, Room settings, review partial failure, drawer Escape, goal-first creation and binding recovery.",
     );
     console.log("Screenshots:", screenshotDir);
     clearTimeout(timer);

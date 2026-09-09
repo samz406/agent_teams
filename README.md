@@ -7,6 +7,8 @@ Agent Teams 是一个面向真实软件研发的本地 AI Team Runtime：人通�
 - 跨平台 Electron + React + TypeScript 桌面端，Renderer 无 Node/文件/Shell 权限，通过受控 IPC 调用本地 Runtime。
 - Main 与 Agent Runtime 运行在独立 Electron Utility Process；Runtime 通过正式 Adapter 接入 Claude Code、Codex、OpenCode、pi 和 Custom CLI，并使用全局并发队列限制活动进程数。
 - SQLite WAL 持久化 Change、Task、Workstream、AgentSession、Handoff、Issue、HumanIntervention、Run、Artifact、Evidence 和审计 Event；进程重启会把残留 Run/Session/Task/Workstream 恢复为可解释的中断或阻塞状态。
+- Room-centric 内核把协作空间作为 Change、多人讨论和 WorkOrder 的共同上层：Room 持有目标、成员、公共上下文、Skill、权限策略和事件历史；三个现有入口可以新建或复用同一 Room，讨论转任务也不会丢失 RoomContext。
+- RoomPolicy 会与 Agent、RoomMember 和具体工作项权限逐层取交集，并实际约束 Runtime；Room 还可禁止 Agent 委派、设置回应模式与最大发言/执行次数。现阶段只提供本地工作台 Adapter，不接入 Slack 或飞书。
 - 新建任务会立即持久化首个 Task，并自动启动 Leader 的真实 CLI Run；如果 Runtime 未安装或启动失败，Change/Task 会保留为 BLOCKED，不会因为启动失败把任务丢掉。
 - Team Chat 的 `/status` 与常见状态查询直接读取 Agent Teams 的持久化 Source of Truth，不会暂停正在工作的 Agent；普通纠偏指令仍按 Human Intervention 形成 Parent Run 谱系。
 - AgentSession 保存原生 CLI Session ID；Pause、Resume、Retry 形成 Parent Run 谱系，支持 Claude/Codex/OpenCode 的原生 Session Resume，并保存 stdout/stderr、Exit Code、Git、Diff、测试和命令证据。
@@ -15,7 +17,7 @@ Agent Teams 是一个面向真实软件研发的本地 AI Team Runtime：人通�
 - 一个 Change 可挂载多个 Workspace、Agent 和 Workstream；Agent 的 `team-actions` 只允许向当前 Session Team 委派，并创建真实 Task、Run 与 Handoff。
 - 内置五种责任流；AUTO 阶段仅在全部 Task 验收且无 Blocking Issue 时推进，人工 Gate 仍要求批准 Artifact，Bug Fix 最终验证强制由非实现 Agent 完成。
 - 独立“多人聊天”模式支持圆桌、头脑风暴、正反辩论、专家会诊、务虚会和六顶思考帽：系统按模式生成差异化角色模板，Leader 轮末主持，角色共享上下文；聊天可暂停、恢复、通过 @角色 定向追问、生成 Markdown 产物并一键转为正式任务。
-- 新增“数字员工”主线：每个 Runtime Agent 都有独立、可版本化的长期岗位档案，支持 Role/Project/Episode/Workflow 四层记忆、候选审批、来源追溯、冲突保护和不可信数据隔离。
+- 新增“数字员工”主线：每个 Runtime Agent 都有独立、可版本化的长期岗位档案，支持 Role/Room/Project/Episode/Workflow 五层记忆、候选审批、来源追溯、冲突保护和不可信数据隔离。
 - Skill 以锁定版本注入工作单，包含 Markdown 步骤、输入输出 Schema、能力与 Evidence 声明；Skill 只检查权限，不会自动放宽 Agent 权限。
 - 非研发工作使用独立 WorkOrder 状态机和 Session，不包装成隐藏 Change；Runtime Exit 0 后仍需通过来源、数据新鲜度、输出结构和本地交付 Evidence 才能标记为完成，并自动沉淀 Episode Memory。
 - 定时计划使用 IANA 时区、Cron、确定性模板变量和幂等键创建 WorkOrder；关闭窗口后 Runtime 在系统托盘继续驻留，失败、阻塞和错过执行会进入应用内通知，窗口隐藏时同时使用系统通知。
@@ -32,6 +34,8 @@ npm run dev
 ```
 
 首次打开后：在“新建任务”中选择协作模式，填写目标，挂载一个或多个本地项目目录并选择 Agent。创建成功后 Agent Teams 会立即建立首个 Task 并启动 Leader Runtime，无需再发送一条消息才能开始执行。CLI 使用本机已有登录态，应用不保存 API Key。
+
+任务、多人讨论和工作单默认各自创建协作空间，也可以在创建时复用已有空间。进入任意详情页后可通过“空间设置”维护公共摘要、事实、决策、约束、待确认问题、空间 Skill 和权限上限；同一 Agent 进入不同空间时会获得对应 RoomContext、RoomPolicy 与 SkillVersion。
 
 纯思考场景可从“多人聊天”进入，不要求 Workspace。创建聊天时设置主题、背景、讨论模式和最大轮数；轮次是唯一的自动停止条件，消息数与 Token 仅作为用量记录，不参与限制。系统会按圆桌、头脑风暴、辩论、会诊、务虚会或六顶思考帽自动生成本次角色模板，再映射到已配置的真实 Runtime Agent，避免把 Code Agent 等执行身份直接暴露为讨论角色。每个讨论角色拥有独立 Session；六顶思考帽即使复用底层 Runtime 配置，也会完整保留蓝、白、红、黑、黄、绿六个相互隔离的角色。务虚会按“外部变化—内部反思—未来情景—战略议题”推进；六顶思考帽按“定义问题—分帽审视—交叉校验—综合决策”推进。聊天支持 Markdown 共享记忆、输入框 @角色 定向追问和独立滚动；结束后可由 Leader 生成总结、行动计划、Design Brief、PRD、决策矩阵、战略议题清单或六帽分析报告，也可以选择 Workspace 将结论转换为现有 Evidence 驱动任务。
 

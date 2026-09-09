@@ -12,6 +12,7 @@ import ReactMarkdown from "react-markdown";
 import type { WorkOrder } from "../../../shared/contracts";
 import { errorText, useAppStore } from "../store";
 import { statusLabel } from "../status-labels";
+import RoomSettingsDialog from "../components/RoomSettingsDialog";
 
 export default function WorkOrderRoom({
   order,
@@ -23,6 +24,7 @@ export default function WorkOrderRoom({
   const { snapshot, live, notify } = useAppStore();
   const [tab, setTab] = useState<"delivery" | "runtime">("delivery");
   const owner = snapshot.agents.find((item) => item.id === order.ownerAgentId);
+  const room = snapshot.rooms.find((item) => item.id === order.roomId);
   const runs = snapshot.runs.filter((item) => item.workOrderId === order.id);
   const run = runs.find((item) => item.id === order.currentRunId) ?? runs[0];
   const deliverable = snapshot.deliverables.find(
@@ -44,11 +46,14 @@ export default function WorkOrderRoom({
           <ArrowLeft />
         </button>
         <div>
-          <span>工作单 #{order.number}</span>
+          <span>
+            工作单 #{order.number}{room ? ` · ${room.name}` : ""}
+          </span>
           <h1>{order.title}</h1>
           <p>{order.goal}</p>
         </div>
         <div className="room-actions">
+          <RoomSettingsDialog roomId={order.roomId} />
           <span className={`status ${order.status.toLowerCase()}`}>
             {statusLabel(order.status)}
           </span>
@@ -89,6 +94,8 @@ export default function WorkOrderRoom({
             <dd>{owner?.name}</dd>
             <dt>创建来源</dt>
             <dd>{order.createdByType}</dd>
+            <dt>协作空间</dt>
+            <dd>{room?.name ?? "未知空间"}</dd>
             <dt>Session</dt>
             <dd>
               {snapshot.agentSessions

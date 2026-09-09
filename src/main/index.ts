@@ -20,12 +20,15 @@ import type {
   CreateChangeInput,
   CreateConversationInput,
   CreateMemoryInput,
+  CreateRoomInput,
   CreateScheduleInput,
   CreateSkillInput,
   CreateWorkOrderInput,
   IssueStatus,
+  RoomPolicy,
   RuntimeEvent,
   UpdateAgentInput,
+  UpdateRoomContextInput,
   UpsertAgentProfileInput,
 } from "../shared/contracts";
 
@@ -85,6 +88,19 @@ function createWindow(): void {
 function registerIpc(): void {
   ipcMain.handle("app:snapshot", () =>
     runtime.request<AppSnapshot>({ type: "snapshot.get" }),
+  );
+  ipcMain.handle("room:create", (_event, input: CreateRoomInput) =>
+    runtime.request({ type: "room.create", input }),
+  );
+  ipcMain.handle(
+    "room:policy-update",
+    (_event, roomId: string, policy: RoomPolicy) =>
+      runtime.request({ type: "room.policy.update", roomId, policy }),
+  );
+  ipcMain.handle(
+    "room:context-update",
+    (_event, roomId: string, input: UpdateRoomContextInput) =>
+      runtime.request({ type: "room.context.update", roomId, input }),
   );
   ipcMain.handle("workspace:select", async () => {
     const result = await dialog.showOpenDialog(window!, {

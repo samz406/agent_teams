@@ -17,6 +17,7 @@ import { AdapterRegistry, type RuntimeAdapter } from "../adapters";
 import { EvidenceService } from "../evidence-service";
 import { assembleContext } from "../memory/context-assembler";
 import { RuntimeQueue } from "../runtime-queue";
+import { evaluateRoomPermissions } from "../room-runtime";
 import { validateJsonSchema } from "../skills/skill-validator";
 import { validateOutput } from "./output-validator";
 
@@ -59,11 +60,19 @@ export class WorkOrderService {
         order,
         "负责人岗位档案尚未启用，请先补全岗位并设为“启用”",
       );
-    const skills = order.skillVersionIds
+    const room = this.db.getRoom(order.roomId);
+    const roomContext = this.db.getRoomContext(order.roomId);
+    const roomMember = this.db.getRoomMember(order.roomId, agent.id);
+    if (!room || !roomContext)
+      return this.block(order, "工作单空间或空间上下文不存在");
+    const skillIds = [
+      ...new Set([...room.policy.skillVersionIds, ...order.skillVersionIds]),
+    ];
+    const skills = skillIds
       .map((skillId) => this.db.getSkillVersion(skillId))
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
     if (
-      skills.length !== order.skillVersionIds.length ||
+      skills.length !== skillIds.length ||
       skills.some((item) => item.status !== "VERIFIED")
     )
       return this.block(order, "指定的 SkillVersion 不存在或尚未发布");
@@ -75,10 +84,20 @@ export class WorkOrderService {
           `输入不符合 Skill Schema：${validation.errors.join("；")}`,
         );
     }
-    const permissions = intersectPermissions(
-      agent.permissions,
-      order.permissions,
-    );
+    let permissions: PermissionSet;
+    try {
+      permissions = evaluateRoomPermissions(
+        agent,
+        room,
+        roomMember,
+        order.permissions,
+      );
+    } catch (error) {
+      return this.block(
+        order,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     const missing = [
       ...new Set(skills.flatMap((item) => item.requiredCapabilities)),
     ].filter((capability) => !hasCapability(permissions, capability));
@@ -100,8 +119,15 @@ export class WorkOrderService {
       agent,
       profile,
       order,
-      this.db.listActiveMemories(agent.id, order.projectScopeId),
+      this.db.listActiveMemories(agent.id, order.projectScopeId, order.roomId),
       skills,
+      {
+        room,
+        context: roomContext,
+        member: roomMember!,
+        permissions,
+        skills,
+      },
     );
     const adapter = this.registry.get(agent.runtime);
     const detected = adapter.detect(this.runtimes());
@@ -366,6 +392,18 @@ export class WorkOrderService {
             : `缺少通过的 Evidence：${missing.join("、")}`,
         );
       this.db.updateWorkOrder(order.id, "SUCCEEDED");
+      this.db.mergeRoomContext(order.roomId, {
+        summary: parsed.finalResponse.slice(0, 1200),
+      });
+      this.db.addRoomEvent({
+        roomId: order.roomId,
+        actorType: "AGENT",
+        actorId: agent.id,
+        type: "WORK_ORDER_SUCCEEDED",
+        subjectType: "WORK_ORDER",
+        subjectId: order.id,
+        payload: { runId: run.id },
+      });
       this.db.createMemory({
         agentId: agent.id,
         scope: "EPISODE",
@@ -434,16 +472,6 @@ export class WorkOrderService {
   }
 }
 
-const intersectPermissions = (
-  a: PermissionSet,
-  b: PermissionSet,
-): PermissionSet => ({
-  read: a.read && b.read,
-  write: a.write && b.write,
-  shell: a.shell && b.shell,
-  git: a.git && b.git,
-  network: a.network && b.network,
-});
 const capabilityMap: Record<string, keyof PermissionSet | undefined> = {
   "fs.read": "read",
   "fs.write": "write",

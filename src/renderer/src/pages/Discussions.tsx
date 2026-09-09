@@ -208,6 +208,7 @@ function NewConversation({
   notify(type: "success" | "error", text: string): void;
 }): import("react").JSX.Element {
   const agents = useAppStore((state) => state.snapshot.agents);
+  const rooms = useAppStore((state) => state.snapshot.rooms);
   const [form, setForm] = useState<
     Omit<CreateConversationInput, "participants">
   >({
@@ -216,6 +217,7 @@ function NewConversation({
     background: "",
     mode: "roundtable",
     maxRounds: 20,
+    roomId: null,
   });
   const [participants, setParticipants] = useState(() =>
     buildConversationParticipants("roundtable", agents),
@@ -277,6 +279,24 @@ function NewConversation({
           </button>
         </header>
         <div className="discussion-form">
+          <label>
+            协作空间（可选）
+            <select
+              value={form.roomId ?? ""}
+              onChange={(event) =>
+                setForm({ ...form, roomId: event.target.value || null })
+              }
+            >
+              <option value="">为此讨论创建新空间</option>
+              {rooms
+                .filter((room) => room.status === "ACTIVE")
+                .map((room) => (
+                  <option value={room.id} key={room.id}>
+                    {room.name} · {room.kind}
+                  </option>
+                ))}
+            </select>
+          </label>
           <label>
             聊天标题
             <input

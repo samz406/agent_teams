@@ -129,6 +129,21 @@ async function dispatch(request: RuntimeRequest): Promise<unknown> {
   switch (request.type) {
     case "snapshot.get":
       return db.snapshot(runManager.getRuntimes());
+    case "room.create": {
+      const value = db.createRoom(request.input);
+      changed();
+      return value;
+    }
+    case "room.policy.update": {
+      const value = db.updateRoomPolicy(request.roomId, request.policy);
+      changed();
+      return value;
+    }
+    case "room.context.update": {
+      const value = db.updateRoomContext(request.roomId, request.input);
+      changed();
+      return value;
+    }
     case "workspace.add": {
       const value = db.addWorkspace(request.workspace);
       changed();
@@ -299,6 +314,7 @@ function convertConversation(
     );
   const deliverable = db.getConversationDeliverables(conversationId)[0];
   const change = db.createChange({
+    roomId: conversation.roomId,
     title: conversation.title,
     description:
       deliverable?.content ||

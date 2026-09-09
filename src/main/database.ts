@@ -21,6 +21,7 @@ import type {
   CreateChangeInput,
   CreateConversationInput,
   CreateMemoryInput,
+  CreateRoomInput,
   CreateScheduleInput,
   CreateSkillInput,
   CreateWorkOrderInput,
@@ -33,6 +34,11 @@ import type {
   MemoryEntry,
   Message,
   Notification,
+  Room,
+  RoomContext,
+  RoomEvent,
+  RoomMember,
+  RoomPolicy,
   Run,
   RuntimeInfo,
   Schedule,
@@ -42,6 +48,7 @@ import type {
   Task,
   TaskStatus,
   UpsertAgentProfileInput,
+  UpdateRoomContextInput,
   Workspace,
   WorkOrder,
   WorkOrderStatus,
@@ -262,7 +269,12 @@ export class AppDatabase {
     `);
     this.upgradeExecutionSubjects();
     this.createLongTermSchema();
-    this.db.pragma("user_version = 3");
+    this.createRoomSchema();
+    this.ensureColumn("t_change", "room_id", "TEXT");
+    this.ensureColumn("t_conversation", "room_id", "TEXT");
+    this.ensureColumn("t_work_order", "room_id", "TEXT");
+    this.backfillRooms();
+    this.db.pragma("user_version = 4");
   }
 
   private backupBeforeMigration(): void {
@@ -274,8 +286,8 @@ export class AppDatabase {
         .prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1")
         .get(),
     );
-    if (hasTables && version < 3 && existsSync(this.path))
-      copyFileSync(this.path, `${this.path}.pre-v3.bak`);
+    if (hasTables && version < 4 && existsSync(this.path))
+      copyFileSync(this.path, `${this.path}.pre-v4.bak`);
   }
 
   private upgradeExecutionSubjects(): void {
@@ -415,6 +427,165 @@ export class AppDatabase {
       SELECT lower(hex(randomblob(16))),id,description,responsibility,'[]','[]','[]',quality_bar,'[]','[]','数据缺失或无法核验时进入阻塞，并明确说明原因。','[]','DRAFT',1,?,? FROM t_agent`,
       )
       .run(time, time);
+  }
+
+  private createRoomSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS t_room (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, goal TEXT NOT NULL, kind TEXT NOT NULL,
+        status TEXT NOT NULL, policy TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS t_room_member (
+        id TEXT PRIMARY KEY, room_id TEXT NOT NULL, subject_type TEXT NOT NULL, subject_id TEXT NOT NULL,
+        role TEXT NOT NULL, permissions TEXT NOT NULL, can_instruct INTEGER NOT NULL,
+        can_approve INTEGER NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE(room_id,subject_type,subject_id)
+      );
+      CREATE TABLE IF NOT EXISTS t_room_context (
+        id TEXT PRIMARY KEY, room_id TEXT NOT NULL UNIQUE, version INTEGER NOT NULL, summary TEXT NOT NULL,
+        facts TEXT NOT NULL, decisions TEXT NOT NULL, constraints_json TEXT NOT NULL,
+        open_questions TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS t_room_event (
+        id TEXT PRIMARY KEY, room_id TEXT NOT NULL, actor_type TEXT NOT NULL, actor_id TEXT,
+        type TEXT NOT NULL, subject_type TEXT NOT NULL, subject_id TEXT NOT NULL,
+        payload TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_room_status ON t_room(status,updated_at);
+      CREATE INDEX IF NOT EXISTS idx_room_member_room ON t_room_member(room_id,subject_type,subject_id);
+      CREATE INDEX IF NOT EXISTS idx_room_event_room ON t_room_event(room_id,created_at);
+    `);
+  }
+
+  private backfillRooms(): void {
+    const tx = this.db.transaction(() => {
+      const changes = this.db
+        .prepare("SELECT id,title,description,agent_ids,room_id,created_at,updated_at FROM t_change")
+        .all() as Array<Record<string, unknown>>;
+      for (const row of changes) {
+        const roomId = nullable(row.room_id) ?? randomUUID();
+        this.insertRoomIfMissing(
+          roomId,
+          String(row.title),
+          String(row.description),
+          "PROJECT",
+          String(row.created_at),
+          String(row.updated_at),
+        );
+        this.db.prepare("UPDATE t_change SET room_id=? WHERE id=?").run(roomId, row.id);
+        this.ensureRoomMembers(roomId, parse(String(row.agent_ids), []));
+      }
+
+      const conversations = this.db
+        .prepare("SELECT id,title,topic,room_id,created_at,updated_at FROM t_conversation")
+        .all() as Array<Record<string, unknown>>;
+      for (const row of conversations) {
+        const converted = this.db
+          .prepare(
+            `SELECT c.room_id FROM t_conversation_deliverable d
+             JOIN t_change c ON c.id=d.converted_change_id
+             WHERE d.conversation_id=? AND d.converted_change_id IS NOT NULL LIMIT 1`,
+          )
+          .get(row.id) as { room_id: string | null } | undefined;
+        const roomId = nullable(row.room_id) ?? nullable(converted?.room_id) ?? randomUUID();
+        this.insertRoomIfMissing(
+          roomId,
+          String(row.title),
+          String(row.topic),
+          "DISCUSSION",
+          String(row.created_at),
+          String(row.updated_at),
+        );
+        this.db
+          .prepare("UPDATE t_conversation SET room_id=? WHERE id=?")
+          .run(roomId, row.id);
+        const agentIds = (
+          this.db
+            .prepare("SELECT DISTINCT agent_id FROM t_conversation_participant WHERE conversation_id=?")
+            .all(row.id) as Array<{ agent_id: string }>
+        ).map((item) => item.agent_id);
+        this.ensureRoomMembers(roomId, agentIds);
+      }
+
+      const orders = this.db
+        .prepare("SELECT id,title,goal,owner_agent_id,room_id,created_at,updated_at FROM t_work_order")
+        .all() as Array<Record<string, unknown>>;
+      for (const row of orders) {
+        const roomId = nullable(row.room_id) ?? randomUUID();
+        this.insertRoomIfMissing(
+          roomId,
+          String(row.title),
+          String(row.goal),
+          "OPERATIONS",
+          String(row.created_at),
+          String(row.updated_at),
+        );
+        this.db.prepare("UPDATE t_work_order SET room_id=? WHERE id=?").run(roomId, row.id);
+        this.ensureRoomMembers(roomId, [String(row.owner_agent_id)]);
+      }
+    });
+    tx();
+  }
+
+  private insertRoomIfMissing(
+    id: string,
+    name: string,
+    goal: string,
+    kind: Room["kind"],
+    createdAt: string,
+    updatedAt: string,
+  ): void {
+    this.db
+      .prepare("INSERT OR IGNORE INTO t_room VALUES (?,?,?,?,?,?,?,?)")
+      .run(id, name, goal, kind, "ACTIVE", json(defaultRoomPolicy(kind)), createdAt, updatedAt);
+    this.db
+      .prepare("INSERT OR IGNORE INTO t_room_context VALUES (?,?,?,?,?,?,?,?,?)")
+      .run(randomUUID(), id, 1, "", json([]), json([]), json([]), json([]), updatedAt);
+    this.ensureHumanRoomOwner(id, createdAt);
+  }
+
+  private ensureHumanRoomOwner(roomId: string, createdAt = now()): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO t_room_member
+         (id,room_id,subject_type,subject_id,role,permissions,can_instruct,can_approve,created_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        randomUUID(),
+        roomId,
+        "HUMAN",
+        "local-owner",
+        "OWNER",
+        json(fullPermissions(true)),
+        1,
+        1,
+        createdAt,
+      );
+  }
+
+  private ensureRoomMembers(roomId: string, agentIds: string[]): void {
+    for (const agentId of [...new Set(agentIds)]) {
+      const agent = this.getAgent(agentId);
+      if (!agent) continue;
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO t_room_member
+           (id,room_id,subject_type,subject_id,role,permissions,can_instruct,can_approve,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          randomUUID(),
+          roomId,
+          "AGENT",
+          agentId,
+          "AGENT",
+          json(agent.permissions),
+          1,
+          0,
+          now(),
+        );
+    }
   }
 
   private ensureColumn(table: string, column: string, type: string): void {
@@ -599,8 +770,207 @@ export class AppDatabase {
     for (const agent of defaults) this.createAgent(agent);
   }
 
+  createRoom(input: CreateRoomInput): Room {
+    if (!input.name.trim() || !input.goal.trim())
+      throw new Error("空间名称和目标不能为空");
+    const time = now();
+    const id = randomUUID();
+    const defaults = defaultRoomPolicy(input.kind);
+    const policy: RoomPolicy = {
+      ...defaults,
+      ...input.policy,
+      permissions: {
+        ...defaults.permissions,
+        ...(input.policy?.permissions ?? {}),
+      },
+      maxAgentTurns: clamp(
+        input.policy?.maxAgentTurns ?? defaults.maxAgentTurns,
+        1,
+        100,
+      ),
+    };
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare("INSERT INTO t_room VALUES (?,?,?,?,?,?,?,?)")
+        .run(
+          id,
+          input.name.trim(),
+          input.goal.trim(),
+          input.kind,
+          "ACTIVE",
+          json(policy),
+          time,
+          time,
+        );
+      this.db
+        .prepare("INSERT INTO t_room_context VALUES (?,?,?,?,?,?,?,?,?)")
+        .run(randomUUID(), id, 1, "", json([]), json([]), json([]), json([]), time);
+      this.ensureHumanRoomOwner(id, time);
+      this.ensureRoomMembers(id, input.agentIds ?? []);
+      this.addRoomEvent({
+        roomId: id,
+        actorType: "HUMAN",
+        actorId: "local-owner",
+        type: "ROOM_CREATED",
+        subjectType: "ROOM",
+        subjectId: id,
+        payload: { kind: input.kind },
+      });
+    });
+    tx();
+    return this.getRoom(id)!;
+  }
+
+  getRoom(id: string): Room | undefined {
+    const row = this.db.prepare("SELECT * FROM t_room WHERE id=?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? mapRoom(row) : undefined;
+  }
+
+  getRoomContext(roomId: string): RoomContext | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM t_room_context WHERE room_id=?")
+      .get(roomId) as Record<string, unknown> | undefined;
+    return row ? mapRoomContext(row) : undefined;
+  }
+
+  getRoomMember(roomId: string, agentId: string): RoomMember | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM t_room_member WHERE room_id=? AND subject_type='AGENT' AND subject_id=?",
+      )
+      .get(roomId, agentId) as Record<string, unknown> | undefined;
+    return row ? mapRoomMember(row) : undefined;
+  }
+
+  updateRoomPolicy(roomId: string, policy: RoomPolicy): Room {
+    if (!this.getRoom(roomId)) throw new Error("空间不存在");
+    const normalized: RoomPolicy = {
+      ...policy,
+      skillVersionIds: dedupeStrings(policy.skillVersionIds),
+      maxAgentTurns: clamp(policy.maxAgentTurns, 1, 100),
+    };
+    this.db
+      .prepare("UPDATE t_room SET policy=?,updated_at=? WHERE id=?")
+      .run(json(normalized), now(), roomId);
+    this.addRoomEvent({
+      roomId,
+      actorType: "HUMAN",
+      actorId: "local-owner",
+      type: "ROOM_POLICY_UPDATED",
+      subjectType: "ROOM",
+      subjectId: roomId,
+      payload: normalized as unknown as Record<string, unknown>,
+    });
+    return this.getRoom(roomId)!;
+  }
+
+  updateRoomContext(
+    roomId: string,
+    input: UpdateRoomContextInput,
+    actor: { type: RoomEvent["actorType"]; id: string | null } = {
+      type: "HUMAN",
+      id: "local-owner",
+    },
+  ): RoomContext {
+    if (!this.getRoom(roomId)) throw new Error("空间不存在");
+    this.db
+      .prepare(
+        `UPDATE t_room_context SET version=version+1,summary=?,facts=?,decisions=?,constraints_json=?,open_questions=?,updated_at=? WHERE room_id=?`,
+      )
+      .run(
+        input.summary.trim(),
+        json(dedupeStrings(input.facts)),
+        json(dedupeStrings(input.decisions)),
+        json(dedupeStrings(input.constraints)),
+        json(dedupeStrings(input.openQuestions)),
+        now(),
+        roomId,
+      );
+    this.db.prepare("UPDATE t_room SET updated_at=? WHERE id=?").run(now(), roomId);
+    this.addRoomEvent({
+      roomId,
+      actorType: actor.type,
+      actorId: actor.id,
+      type: "ROOM_CONTEXT_UPDATED",
+      subjectType: "ROOM",
+      subjectId: roomId,
+      payload: { summary: input.summary.slice(0, 500) },
+    });
+    return this.getRoomContext(roomId)!;
+  }
+
+  mergeRoomContext(
+    roomId: string,
+    patch: Partial<UpdateRoomContextInput>,
+  ): RoomContext {
+    const current = this.getRoomContext(roomId);
+    if (!current) throw new Error("空间上下文不存在");
+    return this.updateRoomContext(
+      roomId,
+      {
+        summary: patch.summary ?? current.summary,
+        facts: dedupeStrings([...current.facts, ...(patch.facts ?? [])]),
+        decisions: dedupeStrings([
+          ...current.decisions,
+          ...(patch.decisions ?? []),
+        ]),
+        constraints: dedupeStrings([
+          ...current.constraints,
+          ...(patch.constraints ?? []),
+        ]),
+        openQuestions: dedupeStrings([
+          ...current.openQuestions,
+          ...(patch.openQuestions ?? []),
+        ]),
+      },
+      { type: "SYSTEM", id: null },
+    );
+  }
+
+  addRoomEvent(
+    input: Omit<RoomEvent, "id" | "createdAt">,
+  ): RoomEvent {
+    const value: RoomEvent = { ...input, id: randomUUID(), createdAt: now() };
+    this.db
+      .prepare("INSERT INTO t_room_event VALUES (?,?,?,?,?,?,?,?,?)")
+      .run(
+        value.id,
+        value.roomId,
+        value.actorType,
+        value.actorId,
+        value.type,
+        value.subjectType,
+        value.subjectId,
+        json(value.payload),
+        value.createdAt,
+      );
+    return value;
+  }
+
   snapshot(runtimes: RuntimeInfo[]): AppSnapshot {
     return {
+      rooms: (
+        this.db
+          .prepare("SELECT * FROM t_room ORDER BY updated_at DESC")
+          .all() as Record<string, unknown>[]
+      ).map(mapRoom),
+      roomMembers: (
+        this.db
+          .prepare("SELECT * FROM t_room_member ORDER BY created_at")
+          .all() as Record<string, unknown>[]
+      ).map(mapRoomMember),
+      roomContexts: (
+        this.db
+          .prepare("SELECT * FROM t_room_context ORDER BY updated_at DESC")
+          .all() as Record<string, unknown>[]
+      ).map(mapRoomContext),
+      roomEvents: (
+        this.db
+          .prepare("SELECT * FROM t_room_event ORDER BY created_at DESC LIMIT 500")
+          .all() as Record<string, unknown>[]
+      ).map(mapRoomEvent),
       changes: (
         this.db
           .prepare("SELECT * FROM t_change ORDER BY updated_at DESC")
@@ -820,6 +1190,15 @@ export class AppDatabase {
   }
 
   createChange(input: CreateChangeInput): Change {
+    const room = input.roomId
+      ? this.getRoom(input.roomId)
+      : this.createRoom({
+          name: input.title,
+          goal: input.description,
+          kind: "PROJECT",
+          agentIds: input.agentIds,
+        });
+    if (!room || room.status !== "ACTIVE") throw new Error("目标空间不存在或已归档");
     const number =
       ((
         this.db.prepare("SELECT MAX(number) AS n FROM t_change").get() as {
@@ -830,6 +1209,7 @@ export class AppDatabase {
     const value: Change = {
       ...input,
       id: randomUUID(),
+      roomId: room.id,
       number,
       dueDate: input.dueDate ?? null,
       status: "RUNNING",
@@ -840,8 +1220,8 @@ export class AppDatabase {
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO t_change (id,number,title,description,workflow_type,priority,due_date,status,current_phase,workspace_ids,agent_ids,tags,created_at,updated_at)
-        VALUES (@id,@number,@title,@description,@workflowType,@priority,@dueDate,@status,@currentPhase,@workspaceIds,@agentIds,@tags,@createdAt,@updatedAt)`,
+          `INSERT INTO t_change (id,room_id,number,title,description,workflow_type,priority,due_date,status,current_phase,workspace_ids,agent_ids,tags,created_at,updated_at)
+        VALUES (@id,@roomId,@number,@title,@description,@workflowType,@priority,@dueDate,@status,@currentPhase,@workspaceIds,@agentIds,@tags,@createdAt,@updatedAt)`,
         )
         .run({
           ...value,
@@ -886,6 +1266,16 @@ export class AppDatabase {
         `任务 #${number} 已创建。Workspace 与 Agent 已就绪，当前进入 Discovery。`,
         null,
       );
+      this.ensureRoomMembers(room.id, input.agentIds);
+      this.addRoomEvent({
+        roomId: room.id,
+        actorType: "HUMAN",
+        actorId: "local-owner",
+        type: "CHANGE_CREATED",
+        subjectType: "CHANGE",
+        subjectId: value.id,
+        payload: { number },
+      });
       this.event("change", value.id, "CHANGE_CREATED", value);
     });
     tx();
@@ -916,6 +1306,22 @@ export class AppDatabase {
       )
       .run(value);
     this.event("change", changeId, "MESSAGE_CREATED", value);
+    const change = this.getChange(changeId);
+    if (change)
+      this.addRoomEvent({
+        roomId: change.roomId,
+        actorType:
+          senderType === "human"
+            ? "HUMAN"
+            : senderType === "system"
+              ? "SYSTEM"
+              : "AGENT",
+        actorId: senderId,
+        type: "MESSAGE_CREATED",
+        subjectType: "CHANGE",
+        subjectId: changeId,
+        payload: { messageId: value.id, preview: content.slice(0, 300) },
+      });
     return value;
   }
 
@@ -960,6 +1366,24 @@ export class AppDatabase {
         workOrderId: value.workOrderId,
         agentId: value.agentId,
       });
+      const subject = value.changeId
+        ? this.getChange(value.changeId)
+        : value.workOrderId
+          ? this.getWorkOrder(value.workOrderId)
+          : undefined;
+      if (subject)
+        this.addRoomEvent({
+          roomId: subject.roomId,
+          actorType: "AGENT",
+          actorId: value.agentId,
+          type: "RUN_QUEUED",
+          subjectType: "RUN",
+          subjectId: value.id,
+          payload: {
+            changeId: value.changeId,
+            workOrderId: value.workOrderId,
+          },
+        });
     });
     tx();
   }
@@ -1356,8 +1780,19 @@ export class AppDatabase {
           .get() as { n: number | null }
       ).n ?? 0) + 1;
     const time = now();
+    const participantAgentIds = input.participants.map((item) => item.agentId);
+    const room = input.roomId
+      ? this.getRoom(input.roomId)
+      : this.createRoom({
+          name: input.title,
+          goal: input.topic,
+          kind: "DISCUSSION",
+          agentIds: participantAgentIds,
+        });
+    if (!room || room.status !== "ACTIVE") throw new Error("目标空间不存在或已归档");
     const value: Conversation = {
       id: randomUUID(),
+      roomId: room.id,
       number,
       title: input.title.trim(),
       topic: input.topic.trim(),
@@ -1375,11 +1810,12 @@ export class AppDatabase {
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO t_conversation (id,number,title,topic,background,mode,status,current_round,max_rounds,max_messages,max_tokens,message_count,token_used,stop_reason,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO t_conversation (id,room_id,number,title,topic,background,mode,status,current_round,max_rounds,max_messages,max_tokens,message_count,token_used,stop_reason,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           value.id,
+          value.roomId,
           value.number,
           value.title,
           value.topic,
@@ -1433,6 +1869,16 @@ export class AppDatabase {
           json([]),
           time,
         );
+      this.ensureRoomMembers(room.id, participantAgentIds);
+      this.addRoomEvent({
+        roomId: room.id,
+        actorType: "HUMAN",
+        actorId: "local-owner",
+        type: "CONVERSATION_CREATED",
+        subjectType: "CONVERSATION",
+        subjectId: value.id,
+        payload: { number },
+      });
       this.event("conversation", value.id, "CONVERSATION_CREATED", input);
     });
     tx();
@@ -1619,6 +2065,27 @@ export class AppDatabase {
       VALUES (@id,@conversationId,@roundId,@participantId,@agentId,@speakerType,@speakerName,@sequence,@content,@status,@inputTokens,@outputTokens,@cachedInputTokens,@cacheCreationInputTokens,@reasoningOutputTokens,@totalTokens,@costUsd,@model,@error,@createdAt,@completedAt)`,
       )
       .run(value);
+    const conversation = this.getConversation(input.conversationId);
+    if (conversation)
+      this.addRoomEvent({
+        roomId: conversation.roomId,
+        actorType:
+          input.speakerType === "human"
+            ? "HUMAN"
+            : input.speakerType === "system"
+              ? "SYSTEM"
+              : "AGENT",
+        actorId: input.agentId,
+        type: "CONVERSATION_TURN_CREATED",
+        subjectType: "CONVERSATION",
+        subjectId: input.conversationId,
+        payload: {
+          turnId: value.id,
+          sequence,
+          status: value.status,
+          preview: value.content.slice(0, 300),
+        },
+      });
     return value;
   }
   updateConversationTurn(
@@ -1896,13 +2363,14 @@ export class AppDatabase {
   listActiveMemories(
     agentId: string,
     projectScopeId: string | null,
+    roomId: string | null = null,
   ): MemoryEntry[] {
     const rows = this.db
       .prepare(
         `SELECT * FROM t_memory_entry WHERE status='ACTIVE' AND (expires_at IS NULL OR expires_at>?)
-      AND (agent_id IS NULL OR agent_id=?) AND (scope='ROLE' OR (scope='PROJECT' AND scope_id=?) OR scope IN ('EPISODE','WORKFLOW')) ORDER BY updated_at DESC LIMIT 200`,
+      AND (agent_id IS NULL OR agent_id=?) AND (scope='ROLE' OR (scope='ROOM' AND scope_id=?) OR (scope='PROJECT' AND scope_id=?) OR scope IN ('EPISODE','WORKFLOW')) ORDER BY updated_at DESC LIMIT 200`,
       )
-      .all(now(), agentId, projectScopeId ?? "") as Record<string, unknown>[];
+      .all(now(), agentId, roomId ?? "", projectScopeId ?? "") as Record<string, unknown>[];
     return rows.map(mapMemory);
   }
 
@@ -2014,6 +2482,15 @@ export class AppDatabase {
           .get(input.idempotencyKey) as Record<string, unknown> | undefined)
       : undefined;
     if (existing) return mapWorkOrder(existing);
+    const room = input.roomId
+      ? this.getRoom(input.roomId)
+      : this.createRoom({
+          name: input.title,
+          goal: input.goal,
+          kind: "OPERATIONS",
+          agentIds: [input.ownerAgentId],
+        });
+    if (!room || room.status !== "ACTIVE") throw new Error("目标空间不存在或已归档");
     const number =
       ((
         this.db.prepare("SELECT MAX(number) n FROM t_work_order").get() as {
@@ -2030,6 +2507,7 @@ export class AppDatabase {
         .digest("hex");
     const value: WorkOrder = {
       id: randomUUID(),
+      roomId: room.id,
       number,
       title: input.title.trim(),
       goal: input.goal.trim(),
@@ -2062,8 +2540,8 @@ export class AppDatabase {
     };
     this.db
       .prepare(
-        `INSERT INTO t_work_order (id,number,title,goal,owner_agent_id,created_by_type,created_by_id,schedule_id,parent_work_order_id,project_scope_id,workspace_id,skill_version_ids,input,constraints_json,output_contract,required_evidence,permissions,status,status_reason,idempotency_key,due_at,current_run_id,started_at,completed_at,created_at,updated_at)
-      VALUES (@id,@number,@title,@goal,@ownerAgentId,@createdByType,@createdById,@scheduleId,@parentWorkOrderId,@projectScopeId,@workspaceId,@skillVersionIds,@input,@constraints,@outputContract,@requiredEvidence,@permissions,@status,@statusReason,@idempotencyKey,@dueAt,@currentRunId,@startedAt,@completedAt,@createdAt,@updatedAt)`,
+        `INSERT INTO t_work_order (id,room_id,number,title,goal,owner_agent_id,created_by_type,created_by_id,schedule_id,parent_work_order_id,project_scope_id,workspace_id,skill_version_ids,input,constraints_json,output_contract,required_evidence,permissions,status,status_reason,idempotency_key,due_at,current_run_id,started_at,completed_at,created_at,updated_at)
+      VALUES (@id,@roomId,@number,@title,@goal,@ownerAgentId,@createdByType,@createdById,@scheduleId,@parentWorkOrderId,@projectScopeId,@workspaceId,@skillVersionIds,@input,@constraints,@outputContract,@requiredEvidence,@permissions,@status,@statusReason,@idempotencyKey,@dueAt,@currentRunId,@startedAt,@completedAt,@createdAt,@updatedAt)`,
       )
       .run({
         ...value,
@@ -2074,6 +2552,16 @@ export class AppDatabase {
         requiredEvidence: json(value.requiredEvidence),
         permissions: json(value.permissions),
       });
+    this.ensureRoomMembers(room.id, [value.ownerAgentId]);
+    this.addRoomEvent({
+      roomId: room.id,
+      actorType: value.createdByType === "AGENT" ? "AGENT" : "HUMAN",
+      actorId: value.createdById ?? "local-owner",
+      type: "WORK_ORDER_CREATED",
+      subjectType: "WORK_ORDER",
+      subjectId: value.id,
+      payload: { number },
+    });
     this.event("work-order", value.id, "WORK_ORDER_CREATED", {
       number,
       source: value.createdByType,
@@ -2489,6 +2977,74 @@ const fullPermissions = (write: boolean): Agent["permissions"] => ({
   git: true,
   network: true,
 });
+const defaultRoomPolicy = (kind: Room["kind"]): RoomPolicy => ({
+  permissions: fullPermissions(kind === "PROJECT"),
+  skillVersionIds: [],
+  allowAgentDelegation: kind === "PROJECT",
+  responseMode: kind === "DISCUSSION" ? "AUTONOMOUS" : "MENTION_ONLY",
+  maxAgentTurns: kind === "DISCUSSION" ? 50 : 20,
+});
+const dedupeStrings = (values: string[]): string[] =>
+  [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, 100);
+const mapRoom = (r: Record<string, unknown>): Room => ({
+  id: String(r.id),
+  name: String(r.name),
+  goal: String(r.goal),
+  kind: r.kind as Room["kind"],
+  status: r.status as Room["status"],
+  policy: normalizeRoomPolicy(
+    parse(String(r.policy), {}),
+    r.kind as Room["kind"],
+  ),
+  createdAt: String(r.created_at),
+  updatedAt: String(r.updated_at),
+});
+const mapRoomMember = (r: Record<string, unknown>): RoomMember => ({
+  id: String(r.id),
+  roomId: String(r.room_id),
+  subjectType: r.subject_type as RoomMember["subjectType"],
+  subjectId: String(r.subject_id),
+  role: r.role as RoomMember["role"],
+  permissions: parse(String(r.permissions), fullPermissions(false)),
+  canInstruct: Boolean(r.can_instruct),
+  canApprove: Boolean(r.can_approve),
+  createdAt: String(r.created_at),
+});
+const mapRoomContext = (r: Record<string, unknown>): RoomContext => ({
+  id: String(r.id),
+  roomId: String(r.room_id),
+  version: Number(r.version),
+  summary: String(r.summary),
+  facts: parse(String(r.facts), []),
+  decisions: parse(String(r.decisions), []),
+  constraints: parse(String(r.constraints_json), []),
+  openQuestions: parse(String(r.open_questions), []),
+  updatedAt: String(r.updated_at),
+});
+const mapRoomEvent = (r: Record<string, unknown>): RoomEvent => ({
+  id: String(r.id),
+  roomId: String(r.room_id),
+  actorType: r.actor_type as RoomEvent["actorType"],
+  actorId: nullable(r.actor_id),
+  type: String(r.type),
+  subjectType: r.subject_type as RoomEvent["subjectType"],
+  subjectId: String(r.subject_id),
+  payload: parse(String(r.payload), {}),
+  createdAt: String(r.created_at),
+});
+const normalizeRoomPolicy = (
+  policy: Partial<RoomPolicy>,
+  kind: Room["kind"],
+): RoomPolicy => {
+  const defaults = defaultRoomPolicy(kind);
+  return {
+    ...defaults,
+    ...policy,
+    permissions: { ...defaults.permissions, ...(policy.permissions ?? {}) },
+    skillVersionIds: dedupeStrings(policy.skillVersionIds ?? []),
+    maxAgentTurns: clamp(policy.maxAgentTurns ?? defaults.maxAgentTurns, 1, 100),
+  };
+};
 const mapWorkspace = (r: Record<string, unknown>): Workspace => ({
   id: String(r.id),
   name: String(r.name),
@@ -2516,6 +3072,7 @@ const mapAgent = (r: Record<string, unknown>): Agent => ({
 });
 const mapChange = (r: Record<string, unknown>): Change => ({
   id: String(r.id),
+  roomId: String(r.room_id),
   number: Number(r.number),
   title: String(r.title),
   description: String(r.description),
@@ -2652,6 +3209,7 @@ const mapIntervention = (r: Record<string, unknown>): HumanIntervention => ({
 });
 const mapConversation = (r: Record<string, unknown>): Conversation => ({
   id: String(r.id),
+  roomId: String(r.room_id),
   number: Number(r.number),
   title: String(r.title),
   topic: String(r.topic),
@@ -2814,6 +3372,7 @@ const mapSkillVersion = (r: Record<string, unknown>): SkillVersion => ({
 });
 const mapWorkOrder = (r: Record<string, unknown>): WorkOrder => ({
   id: String(r.id),
+  roomId: String(r.room_id),
   number: Number(r.number),
   title: String(r.title),
   goal: String(r.goal),
