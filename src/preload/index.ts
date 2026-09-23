@@ -81,6 +81,9 @@ const api: DesktopApi = {
   updateSchedule: (id, enabled) =>
     ipcRenderer.invoke("schedule:update", id, enabled),
   testSchedule: (scheduleId) => ipcRenderer.invoke("schedule:test", scheduleId),
+  getContextCompactions: (subjectType, subjectId) =>
+    ipcRenderer.invoke("context:compactions", subjectType, subjectId),
+  invokeConnector: (input) => ipcRenderer.invoke("connector:invoke", input),
   markNotificationRead: (id) => ipcRenderer.invoke("notification:read", id),
   onRuntimeEvent: (listener) => {
     const handler = (

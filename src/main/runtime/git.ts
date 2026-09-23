@@ -24,6 +24,7 @@ export async function inspectWorkspace(
   repoRoot: string | null;
   branch: string | null;
   baseCommit: string | null;
+  backend: "local-git" | "ephemeral-local";
 }> {
   const repoRoot = await git(path, ["rev-parse", "--show-toplevel"]);
   return {
@@ -31,6 +32,7 @@ export async function inspectWorkspace(
     repoRoot,
     branch: repoRoot ? await git(path, ["branch", "--show-current"]) : null,
     baseCommit: repoRoot ? await git(path, ["rev-parse", "HEAD"]) : null,
+    backend: repoRoot ? "local-git" : "ephemeral-local",
   };
 }
 

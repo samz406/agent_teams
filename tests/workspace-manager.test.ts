@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { WorkspaceManager } from "../src/runtime/workspace-manager";
@@ -62,6 +62,7 @@ describe("workspace permission and worktree isolation", () => {
       repoRoot: repo,
       branch: "main",
       baseCommit,
+      backend: "local-git",
       createdAt: "",
     } satisfies Workspace;
     const binding = {
@@ -100,5 +101,74 @@ describe("workspace permission and worktree isolation", () => {
     expect(prepared.cwd).not.toBe(repo);
     expect(existsSync(join(prepared.cwd, ".git"))).toBe(true);
     expect(prepared.branch).toContain("moxt/1024/agent");
+  });
+
+  it("rejects write execution for ephemeral backend", async () => {
+    const root = mkdtempSync(join(tmpdir(), "moxt-ephemeral-"));
+    roots.push(root);
+    const workspacePath = join(root, "workspace");
+    mkdirSync(workspacePath, { recursive: true });
+    const change = {
+      id: "change-2",
+      roomId: "room-2",
+      number: 2048,
+      title: "x",
+      description: "x",
+      workflowType: "cross-project",
+      priority: "P1",
+      dueDate: null,
+      status: "RUNNING",
+      currentPhase: 3,
+      workspaceIds: ["ws"],
+      agentIds: ["agent"],
+      tags: [],
+      createdAt: "",
+      updatedAt: "",
+    } satisfies Change;
+    const workspace = {
+      id: "ws",
+      name: "tmp",
+      path: workspacePath,
+      repoRoot: null,
+      branch: null,
+      baseCommit: null,
+      backend: "ephemeral-local",
+      createdAt: "",
+    } satisfies Workspace;
+    const binding = {
+      id: "bind",
+      changeId: change.id,
+      agentId: "agent",
+      workspaceId: workspace.id,
+      permissions: {
+        read: true,
+        write: true,
+        shell: true,
+        git: true,
+        network: true,
+      },
+      createdAt: "",
+    } satisfies AgentWorkspaceBinding;
+    const workstream = {
+      id: "stream",
+      changeId: change.id,
+      workspaceId: workspace.id,
+      agentId: "agent",
+      name: "stream",
+      status: "READY",
+      worktreePath: null,
+      branch: null,
+      baseCommit: null,
+      createdAt: "",
+      updatedAt: "",
+    } satisfies Workstream;
+    await expect(
+      new WorkspaceManager(join(root, "data")).prepare(
+        change,
+        workspace,
+        binding,
+        workstream,
+      ),
+    ).rejects.toThrow("ephemeral-local backend 不支持写入执行");
   });
 });

@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type {
   Agent,
@@ -191,6 +192,7 @@ export class ConversationEngine {
     private db: AppDatabase,
     private executor: ConversationExecutor,
     private changed: () => void,
+    private dataDirectory: string | null = null,
   ) {}
 
   start(conversationId: string): void {
@@ -432,6 +434,7 @@ export class ConversationEngine {
           latest.status === "RUNNING" ? "COMPLETED" : "INTERRUPTED",
         );
         this.refreshMemory(conversationId, round.id);
+        await this.compactConversation(conversationId);
         if (!successes && latest.status === "RUNNING") {
           this.db.updateConversationStatus(conversationId, "FAILED", "ERROR");
           this.systemTurn(
@@ -572,7 +575,15 @@ export class ConversationEngine {
       participant.memoryVersion < (memory?.version ?? 0)
         ? `共享记忆 v${memory?.version ?? 0}（以此版本覆盖旧记忆）：\n${formatMemory(memory, Boolean(participant.nativeSessionId))}\n\n`
         : "";
-    return `${base}当前第 ${roundNumber}/${conversation.maxRounds} 轮\n本轮焦点：${focus}\n\n${memoryUpdate}你上次发言后新增的共享消息：\n${updates || "没有新增消息，请直接围绕本轮焦点推进。"}\n\n继续保持“${participant.roleName}”角色，只回应以上新增信息，不要复述已经讨论过的内容。请使用中文，观点具体、有机制、有例子，普通角色控制在 400 字以内，Leader 控制在 600 字以内。`;
+    const compaction = this.db.getLatestContextCompaction(
+      "CONVERSATION",
+      conversation.id,
+    );
+    const compactedHistory =
+      compaction && participant.lastSeenTurnSequence < compaction.beforeSequence
+        ? `历史上下文压缩摘要（已压缩至消息 #${compaction.beforeSequence}，完整原文见 ${compaction.offloadRef}）：\n${compaction.summary}\n\n`
+        : "";
+    return `${base}当前第 ${roundNumber}/${conversation.maxRounds} 轮\n本轮焦点：${focus}\n\n${memoryUpdate}${compactedHistory}你上次发言后新增的共享消息：\n${updates || "没有新增消息，请直接围绕本轮焦点推进。"}\n\n继续保持“${participant.roleName}”角色，只回应以上新增信息，不要复述已经讨论过的内容。请使用中文，观点具体、有机制、有例子，普通角色控制在 400 字以内，Leader 控制在 600 字以内。`;
   }
 
   private summaryPrompt(
@@ -747,6 +758,53 @@ export class ConversationEngine {
       network: true,
     });
     return { room, context, member: member!, permissions, skills };
+  }
+
+  private async compactConversation(conversationId: string): Promise<void> {
+    if (!this.dataDirectory) return;
+    const latest = this.db.getLatestContextCompaction("CONVERSATION", conversationId);
+    const baseline = latest?.beforeSequence ?? 0;
+    const completed = this.db
+      .getConversationTurns(conversationId)
+      .filter((turn) => turn.status === "COMPLETED" && turn.sequence > baseline);
+    if (completed.length < 80) return;
+    const cutoff = completed[completed.length - 40]?.sequence;
+    if (!cutoff) return;
+    const compacted = completed.filter((turn) => turn.sequence <= cutoff);
+    if (compacted.length < 40) return;
+    const summary = compacted
+      .map(
+        (turn) =>
+          `#${turn.sequence} ${turn.speakerName}: ${turn.content.replace(/\s+/g, " ").slice(0, 300)}`,
+      )
+      .join("\n")
+      .slice(-8000);
+    const offloadDir = join(
+      this.dataDirectory,
+      "context-offload",
+      "conversation",
+      conversationId,
+    );
+    await mkdir(offloadDir, { recursive: true });
+    const fileName = `${Date.now()}-${cutoff}.md`;
+    const offloadPath = join(offloadDir, fileName);
+    await writeFile(
+      offloadPath,
+      compacted
+        .map(
+          (turn) =>
+            `## ${turn.sequence} · ${turn.speakerName}\n\n${turn.content || "_empty_"}\n`,
+        )
+        .join("\n"),
+      "utf8",
+    );
+    this.db.createContextCompaction({
+      subjectType: "CONVERSATION",
+      subjectId: conversationId,
+      beforeSequence: cutoff,
+      summary,
+      offloadRef: offloadPath,
+    });
   }
 }
 

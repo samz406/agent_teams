@@ -20,6 +20,10 @@ import { RuntimeQueue } from "../runtime-queue";
 import { evaluateRoomPermissions } from "../room-runtime";
 import { validateJsonSchema } from "../skills/skill-validator";
 import { validateOutput } from "./output-validator";
+import {
+  buildContextUsageEvidence,
+  buildExecutionManifest,
+} from "../context-observability";
 
 type Publish = (event: RuntimeEvent) => void;
 
@@ -170,6 +174,41 @@ export class WorkOrderService {
     this.db.updateWorkOrder(order.id, "READY");
     this.db.createRun(run);
     this.db.addEvidence(run.id, context.evidence);
+    this.db.addEvidence(
+      run.id,
+      buildExecutionManifest({
+        runtime: agent.runtime,
+        permissions,
+        roomPolicy: room.policy,
+        skills,
+        requiredEvidence: order.requiredEvidence,
+        workspaceId: workspace?.id ?? "ephemeral",
+        workspacePath: cwd,
+        resumeNative: resume && Boolean(session.nativeSessionId),
+        subject: "WORK_ORDER",
+      }),
+    );
+    this.db.addEvidence(
+      run.id,
+      buildContextUsageEvidence("WorkOrder context breakdown", {
+        room_context: JSON.stringify(
+          { roomId: room.id, contextVersion: roomContext.version },
+          null,
+          2,
+        ),
+        profile: JSON.stringify(
+          {
+            positionTitle: profile.positionTitle,
+            outcomeStatement: profile.outcomeStatement,
+          },
+          null,
+          2,
+        ),
+        trusted_memory: context.prompt,
+        skills: skills.map((item) => item.instructions).join("\n\n"),
+        instruction: `${order.title}\n${order.goal}\n${order.constraints.join("\n")}`,
+      }),
+    );
     this.db.updateWorkOrder(order.id, "QUEUED", { runId: run.id });
     this.publish({ type: "run.status", runId: run.id, status: "QUEUED" });
     this.changed();
@@ -376,6 +415,19 @@ export class WorkOrderService {
           bytes: Buffer.byteLength(parsed.finalResponse),
           sha256: checksum,
         }),
+      });
+      const offloadDir = join(this.dataDirectory, "context-offload", "work-order");
+      await mkdir(offloadDir, { recursive: true });
+      const compactionPath = join(offloadDir, `${order.id}-${run.id}.md`);
+      await writeFile(compactionPath, parsed.finalResponse, "utf8");
+      const nextCompactionSequence =
+        this.db.listContextCompactions("WORK_ORDER", order.id).length + 1;
+      this.db.createContextCompaction({
+        subjectType: "WORK_ORDER",
+        subjectId: order.id,
+        beforeSequence: nextCompactionSequence,
+        summary: parsed.finalResponse.slice(0, 1200),
+        offloadRef: compactionPath,
       });
       evidence = this.db.getRun(run.id)?.evidence ?? [];
       const missing = order.requiredEvidence.filter(

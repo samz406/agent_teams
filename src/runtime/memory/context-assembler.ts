@@ -86,6 +86,22 @@ export function assembleContext(
           permissions: roomRuntime.permissions,
         }
       : null,
+    contextSegments: {
+      room_context: roomRuntime ? estimate(formatRoomContext(roomRuntime)) : 0,
+      profile: estimate(
+        `${profile.positionTitle}\n${profile.outcomeStatement}\n${profile.recurringResponsibilities.join("\n")}`,
+      ),
+      trusted_memory: estimate(
+        trusted.map(({ item }) => item.content).join("\n\n"),
+      ),
+      untrusted_memory: estimate(
+        untrusted.map(({ item }) => item.content).join("\n\n"),
+      ),
+      skills: estimate(skillBlocks),
+      instruction: estimate(
+        `${workOrder.title}\n${workOrder.goal}\n${workOrder.constraints.join("\n")}`,
+      ),
+    },
   };
   return {
     prompt: roomRuntime ? `${formatRoomContext(roomRuntime)}\n\n${prompt}` : prompt,

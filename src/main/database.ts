@@ -25,6 +25,10 @@ import type {
   CreateScheduleInput,
   CreateSkillInput,
   CreateWorkOrderInput,
+  ContextCompaction,
+  ConnectorDefinition,
+  ConnectorInvocation,
+  DelegationJob,
   Deliverable,
   Evidence,
   Handoff,
@@ -80,7 +84,7 @@ export class AppDatabase {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS t_workspace (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
-        repo_root TEXT, branch TEXT, base_commit TEXT, created_at TEXT NOT NULL
+        repo_root TEXT, branch TEXT, base_commit TEXT, backend TEXT NOT NULL DEFAULT 'local-git', created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS t_agent (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, icon TEXT NOT NULL, description TEXT NOT NULL,
@@ -270,6 +274,12 @@ export class AppDatabase {
     this.upgradeExecutionSubjects();
     this.createLongTermSchema();
     this.createRoomSchema();
+    this.createExtensibilitySchema();
+    this.ensureColumn(
+      "t_workspace",
+      "backend",
+      "TEXT NOT NULL DEFAULT 'local-git'",
+    );
     this.ensureColumn("t_change", "room_id", "TEXT");
     this.ensureColumn("t_conversation", "room_id", "TEXT");
     this.ensureColumn("t_work_order", "room_id", "TEXT");
@@ -457,6 +467,50 @@ export class AppDatabase {
     `);
   }
 
+  private createExtensibilitySchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS t_context_compaction (
+        id TEXT PRIMARY KEY, subject_type TEXT NOT NULL, subject_id TEXT NOT NULL,
+        before_sequence INTEGER NOT NULL, summary TEXT NOT NULL, offload_ref TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_context_compaction_subject
+        ON t_context_compaction(subject_type,subject_id,before_sequence);
+
+      CREATE TABLE IF NOT EXISTS t_delegation_job (
+        id TEXT PRIMARY KEY, parent_run_id TEXT NOT NULL, change_id TEXT NOT NULL,
+        from_agent_id TEXT NOT NULL, to_agent_id TEXT NOT NULL, prompt TEXT NOT NULL,
+        prompt_hash TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+        next_retry_at TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_delegation_job_dedupe
+        ON t_delegation_job(parent_run_id,to_agent_id,prompt_hash);
+      CREATE INDEX IF NOT EXISTS idx_delegation_job_sched
+        ON t_delegation_job(status,next_retry_at,updated_at);
+
+      CREATE TABLE IF NOT EXISTS t_connector (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, capabilities TEXT NOT NULL,
+        risk_level TEXT NOT NULL, required_approval INTEGER NOT NULL, enabled INTEGER NOT NULL,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS t_connector_invocation (
+        id TEXT PRIMARY KEY, connector_id TEXT NOT NULL, room_id TEXT NOT NULL, agent_id TEXT,
+        action TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, reason TEXT,
+        idempotency_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_connector_invocation_connector
+        ON t_connector_invocation(connector_id,created_at);
+    `);
+    const time = now();
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO t_connector
+        (id,name,capabilities,risk_level,required_approval,enabled,created_at,updated_at)
+        VALUES ('knowledge.search','Knowledge Search','["retrieve","cite"]','READ_ONLY',0,1,?,?)`,
+      )
+      .run(time, time);
+  }
+
   private backfillRooms(): void {
     const tx = this.db.transaction(() => {
       const changes = this.db
@@ -596,6 +650,37 @@ export class AppDatabase {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
 
+  private assertMemorySourceResolvable(row: Record<string, unknown>): void {
+    const sourceType = String(row.source_type);
+    const sourceId = String(row.source_id ?? "").trim();
+    if (!sourceId) throw new Error("记忆缺少来源标识，不能激活");
+    if (sourceType === "HUMAN") return;
+    if (sourceType === "IMPORT") {
+      if (sourceId.length < 2) throw new Error("导入记忆来源不能为空");
+      return;
+    }
+    if (sourceType === "RUN") {
+      const exists = this.db
+        .prepare("SELECT 1 FROM t_run WHERE id=? LIMIT 1")
+        .get(sourceId);
+      if (!exists) throw new Error("来源 Run 不存在，不能激活记忆");
+      return;
+    }
+    if (sourceType === "EVIDENCE") {
+      const exists = this.db
+        .prepare("SELECT 1 FROM t_evidence WHERE id=? LIMIT 1")
+        .get(sourceId);
+      if (!exists) throw new Error("来源 Evidence 不存在，不能激活记忆");
+      return;
+    }
+    if (sourceType === "HANDOFF") {
+      const exists = this.db
+        .prepare("SELECT 1 FROM t_handoff WHERE id=? LIMIT 1")
+        .get(sourceId);
+      if (!exists) throw new Error("来源 Handoff 不存在，不能激活记忆");
+    }
+  }
+
   private allowConversationAgentReuse(): void {
     const row = this.db
       .prepare(
@@ -706,6 +791,14 @@ export class AppDatabase {
           "UPDATE t_conversation SET current_round=COALESCE((SELECT MAX(number) FROM t_conversation_round WHERE conversation_id=t_conversation.id),current_round) WHERE status='PAUSED'",
         )
         .run();
+      this.db
+        .prepare(
+          "UPDATE t_delegation_job SET status='PENDING_RETRY', attempts=attempts+1, next_retry_at=?, updated_at=? WHERE status='RUNNING'",
+        )
+        .run(
+          new Date(Date.now() + 30_000).toISOString(),
+          recoveredAt,
+        );
     });
     tx();
   }
@@ -1097,6 +1190,30 @@ export class AppDatabase {
           .prepare("SELECT * FROM t_skill_version ORDER BY created_at DESC")
           .all() as Record<string, unknown>[]
       ).map(mapSkillVersion),
+      contextCompactions: (
+        this.db
+          .prepare(
+            "SELECT * FROM t_context_compaction ORDER BY created_at DESC LIMIT 500",
+          )
+          .all() as Record<string, unknown>[]
+      ).map(mapContextCompaction),
+      delegationJobs: (
+        this.db
+          .prepare("SELECT * FROM t_delegation_job ORDER BY updated_at DESC LIMIT 500")
+          .all() as Record<string, unknown>[]
+      ).map(mapDelegationJob),
+      connectors: (
+        this.db
+          .prepare("SELECT * FROM t_connector ORDER BY name")
+          .all() as Record<string, unknown>[]
+      ).map(mapConnectorDefinition),
+      connectorInvocations: (
+        this.db
+          .prepare(
+            "SELECT * FROM t_connector_invocation ORDER BY created_at DESC LIMIT 500",
+          )
+          .all() as Record<string, unknown>[]
+      ).map(mapConnectorInvocation),
       workOrders: (
         this.db
           .prepare(
@@ -1140,12 +1257,17 @@ export class AppDatabase {
     if (existing) return mapWorkspace(existing);
     const value: Workspace = {
       ...workspace,
+      backend:
+        workspace.backend ??
+        (workspace.repoRoot && workspace.baseCommit
+          ? "local-git"
+          : "ephemeral-local"),
       id: randomUUID(),
       createdAt: now(),
     };
     this.db
       .prepare(
-        "INSERT INTO t_workspace VALUES (@id,@name,@path,@repoRoot,@branch,@baseCommit,@createdAt)",
+        "INSERT INTO t_workspace (id,name,path,repo_root,branch,base_commit,backend,created_at) VALUES (@id,@name,@path,@repoRoot,@branch,@baseCommit,@backend,@createdAt)",
       )
       .run(value);
     this.event("workspace", value.id, "WORKSPACE_ADDED", value);
@@ -1923,6 +2045,58 @@ export class AppDatabase {
         .all(id, sequence) as Record<string, unknown>[]
     ).map(mapConversationTurn);
   }
+  getConversationTurnsUpTo(id: string, sequence: number): ConversationTurn[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM t_conversation_turn WHERE conversation_id=? AND sequence<=? ORDER BY sequence",
+        )
+        .all(id, sequence) as Record<string, unknown>[]
+    ).map(mapConversationTurn);
+  }
+  listContextCompactions(
+    subjectType: ContextCompaction["subjectType"],
+    subjectId: string,
+  ): ContextCompaction[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM t_context_compaction WHERE subject_type=? AND subject_id=? ORDER BY before_sequence DESC",
+        )
+        .all(subjectType, subjectId) as Record<string, unknown>[]
+    ).map(mapContextCompaction);
+  }
+  getLatestContextCompaction(
+    subjectType: ContextCompaction["subjectType"],
+    subjectId: string,
+  ): ContextCompaction | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM t_context_compaction WHERE subject_type=? AND subject_id=? ORDER BY before_sequence DESC LIMIT 1",
+      )
+      .get(subjectType, subjectId) as Record<string, unknown> | undefined;
+    return row ? mapContextCompaction(row) : undefined;
+  }
+  createContextCompaction(
+    input: Omit<ContextCompaction, "id" | "createdAt">,
+  ): ContextCompaction {
+    const value: ContextCompaction = {
+      ...input,
+      id: randomUUID(),
+      createdAt: now(),
+    };
+    this.db
+      .prepare(
+        "INSERT INTO t_context_compaction VALUES (@id,@subjectType,@subjectId,@beforeSequence,@summary,@offloadRef,@createdAt)",
+      )
+      .run(value);
+    this.event("context", value.id, "CONTEXT_COMPACTED", {
+      subjectType: value.subjectType,
+      subjectId: value.subjectId,
+      beforeSequence: value.beforeSequence,
+    });
+    return value;
+  }
   getConversationMemory(id: string): ConversationMemory | undefined {
     const row = this.db
       .prepare("SELECT * FROM t_conversation_memory WHERE conversation_id=?")
@@ -2338,6 +2512,7 @@ export class AppDatabase {
     const status = decision === "APPROVE" ? "ACTIVE" : "REJECTED";
     const time = now();
     const tx = this.db.transaction(() => {
+      if (decision === "APPROVE") this.assertMemorySourceResolvable(row);
       if (decision === "APPROVE" && row.supersedes_id)
         this.db
           .prepare(
@@ -2356,8 +2531,155 @@ export class AppDatabase {
           id,
         );
       this.event("memory", id, `MEMORY_${status}`, {});
+      this.event("memory", id, "MEMORY_PROMOTION_AUDIT", {
+        decision,
+        status,
+        sourceType: row.source_type,
+        sourceId: row.source_id,
+        supersedesId: row.supersedes_id,
+      });
     });
     tx();
+  }
+
+  createDelegationJob(input: {
+    parentRunId: string;
+    changeId: string;
+    fromAgentId: string;
+    toAgentId: string;
+    prompt: string;
+    promptHash: string;
+  }): DelegationJob {
+    const existing = this.db
+      .prepare(
+        "SELECT * FROM t_delegation_job WHERE parent_run_id=? AND to_agent_id=? AND prompt_hash=? LIMIT 1",
+      )
+      .get(
+        input.parentRunId,
+        input.toAgentId,
+        input.promptHash,
+      ) as Record<string, unknown> | undefined;
+    if (existing) return mapDelegationJob(existing);
+    const value: DelegationJob = {
+      id: randomUUID(),
+      parentRunId: input.parentRunId,
+      changeId: input.changeId,
+      fromAgentId: input.fromAgentId,
+      toAgentId: input.toAgentId,
+      prompt: input.prompt,
+      promptHash: input.promptHash,
+      status: "PENDING",
+      attempts: 0,
+      nextRetryAt: null,
+      error: null,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    this.db
+      .prepare(
+        `INSERT INTO t_delegation_job
+        (id,parent_run_id,change_id,from_agent_id,to_agent_id,prompt,prompt_hash,status,attempts,next_retry_at,error,created_at,updated_at)
+        VALUES (@id,@parentRunId,@changeId,@fromAgentId,@toAgentId,@prompt,@promptHash,@status,@attempts,@nextRetryAt,@error,@createdAt,@updatedAt)`,
+      )
+      .run(value);
+    this.event("delegation", value.id, "DELEGATION_JOB_CREATED", {
+      parentRunId: value.parentRunId,
+      toAgentId: value.toAgentId,
+    });
+    return value;
+  }
+  listReadyDelegationJobs(at = now()): DelegationJob[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM t_delegation_job
+           WHERE status IN ('PENDING','PENDING_RETRY') AND (next_retry_at IS NULL OR next_retry_at<=?)
+           ORDER BY created_at ASC`,
+        )
+        .all(at) as Record<string, unknown>[]
+    ).map(mapDelegationJob);
+  }
+  markDelegationJobRunning(id: string): boolean {
+    const updated = this.db
+      .prepare(
+        "UPDATE t_delegation_job SET status='RUNNING',updated_at=? WHERE id=? AND status IN ('PENDING','PENDING_RETRY')",
+      )
+      .run(now(), id);
+    return updated.changes > 0;
+  }
+  completeDelegationJob(id: string): void {
+    this.db
+      .prepare(
+        "UPDATE t_delegation_job SET status='COMPLETED',error=NULL,next_retry_at=NULL,updated_at=? WHERE id=?",
+      )
+      .run(now(), id);
+  }
+  failDelegationJob(id: string, error: string, retryDelayMs: number): void {
+    const row = this.db
+      .prepare("SELECT attempts FROM t_delegation_job WHERE id=?")
+      .get(id) as { attempts: number } | undefined;
+    if (!row) return;
+    const attempts = row.attempts + 1;
+    const terminal = attempts >= 5;
+    this.db
+      .prepare(
+        "UPDATE t_delegation_job SET status=?,attempts=?,error=?,next_retry_at=?,updated_at=? WHERE id=?",
+      )
+      .run(
+        terminal ? "FAILED" : "PENDING_RETRY",
+        attempts,
+        error.slice(0, 2000),
+        terminal ? null : new Date(Date.now() + retryDelayMs).toISOString(),
+        now(),
+        id,
+      );
+  }
+  listConnectors(): ConnectorDefinition[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM t_connector ORDER BY name")
+        .all() as Record<string, unknown>[]
+    ).map(mapConnectorDefinition);
+  }
+  recordConnectorInvocation(input: {
+    connectorId: string;
+    roomId: string;
+    agentId: string | null;
+    action: string;
+    payload: Record<string, unknown>;
+    status: ConnectorInvocation["status"];
+    reason: string | null;
+    idempotencyKey: string;
+  }): ConnectorInvocation {
+    const existing = this.db
+      .prepare("SELECT * FROM t_connector_invocation WHERE idempotency_key=? LIMIT 1")
+      .get(input.idempotencyKey) as Record<string, unknown> | undefined;
+    if (existing) return mapConnectorInvocation(existing);
+    const value: ConnectorInvocation = {
+      id: randomUUID(),
+      connectorId: input.connectorId,
+      roomId: input.roomId,
+      agentId: input.agentId,
+      action: input.action,
+      payload: input.payload,
+      status: input.status,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: now(),
+    };
+    this.db
+      .prepare(
+        `INSERT INTO t_connector_invocation
+        (id,connector_id,room_id,agent_id,action,payload,status,reason,idempotency_key,created_at)
+        VALUES (@id,@connectorId,@roomId,@agentId,@action,@payload,@status,@reason,@idempotencyKey,@createdAt)`,
+      )
+      .run({ ...value, payload: json(value.payload) });
+    this.event("connector", value.id, "CONNECTOR_INVOKED", {
+      connectorId: value.connectorId,
+      status: value.status,
+      reason: value.reason,
+    });
+    return value;
   }
 
   listActiveMemories(
@@ -3052,6 +3374,60 @@ const mapWorkspace = (r: Record<string, unknown>): Workspace => ({
   repoRoot: nullable(r.repo_root),
   branch: nullable(r.branch),
   baseCommit: nullable(r.base_commit),
+  backend:
+    (nullable(r.backend) as Workspace["backend"] | null) ?? "local-git",
+  createdAt: String(r.created_at),
+});
+const mapContextCompaction = (
+  r: Record<string, unknown>,
+): ContextCompaction => ({
+  id: String(r.id),
+  subjectType: String(r.subject_type) as ContextCompaction["subjectType"],
+  subjectId: String(r.subject_id),
+  beforeSequence: Number(r.before_sequence),
+  summary: String(r.summary),
+  offloadRef: String(r.offload_ref),
+  createdAt: String(r.created_at),
+});
+const mapDelegationJob = (r: Record<string, unknown>): DelegationJob => ({
+  id: String(r.id),
+  parentRunId: String(r.parent_run_id),
+  changeId: String(r.change_id),
+  fromAgentId: String(r.from_agent_id),
+  toAgentId: String(r.to_agent_id),
+  prompt: String(r.prompt),
+  promptHash: String(r.prompt_hash),
+  status: String(r.status) as DelegationJob["status"],
+  attempts: Number(r.attempts),
+  nextRetryAt: nullable(r.next_retry_at),
+  error: nullable(r.error),
+  createdAt: String(r.created_at),
+  updatedAt: String(r.updated_at),
+});
+const mapConnectorDefinition = (
+  r: Record<string, unknown>,
+): ConnectorDefinition => ({
+  id: String(r.id),
+  name: String(r.name),
+  capabilities: parse(String(r.capabilities), []),
+  riskLevel: String(r.risk_level) as ConnectorDefinition["riskLevel"],
+  requiredApproval: Boolean(r.required_approval),
+  enabled: Boolean(r.enabled),
+  createdAt: String(r.created_at),
+  updatedAt: String(r.updated_at),
+});
+const mapConnectorInvocation = (
+  r: Record<string, unknown>,
+): ConnectorInvocation => ({
+  id: String(r.id),
+  connectorId: String(r.connector_id),
+  roomId: String(r.room_id),
+  agentId: nullable(r.agent_id),
+  action: String(r.action),
+  payload: parse(String(r.payload), {}),
+  status: String(r.status) as ConnectorInvocation["status"],
+  reason: nullable(r.reason),
+  idempotencyKey: String(r.idempotency_key),
   createdAt: String(r.created_at),
 });
 const mapAgent = (r: Record<string, unknown>): Agent => ({

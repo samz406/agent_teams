@@ -24,6 +24,7 @@ function setup(workflowType: WorkflowType = "cross-project") {
     repoRoot: directory,
     branch: "main",
     baseCommit: "base",
+    backend: "local-git",
   });
   const change = db.createChange({
     title: "Change",

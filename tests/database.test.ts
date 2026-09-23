@@ -76,6 +76,7 @@ describe("transactional local persistence", () => {
       repoRoot: null,
       branch: null,
       baseCommit: null,
+      backend: "ephemeral-local",
     });
     const agentId = snapshot.agents[0].id;
     const change = db.createChange({
@@ -122,6 +123,7 @@ describe("transactional local persistence", () => {
       repoRoot: directory,
       branch: "main",
       baseCommit: "base",
+      backend: "local-git",
     });
     const change = db.createChange({
       title: "Recover",

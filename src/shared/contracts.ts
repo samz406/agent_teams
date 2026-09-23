@@ -1,4 +1,5 @@
 export type RuntimeType = "claude" | "codex" | "opencode" | "pi" | "custom";
+export type WorkspaceBackendType = "local-git" | "ephemeral-local";
 export type RunStatus =
   | "QUEUED"
   | "STARTING"
@@ -147,6 +148,7 @@ export interface Workspace {
   repoRoot: string | null;
   branch: string | null;
   baseCommit: string | null;
+  backend: WorkspaceBackendType;
   createdAt: string;
 }
 
@@ -395,7 +397,9 @@ export interface Evidence {
     | "DATA_FRESHNESS"
     | "OUTPUT_SCHEMA"
     | "DELIVERY"
-    | "APPROVAL";
+    | "APPROVAL"
+    | "MANIFEST"
+    | "CONTEXT_USAGE";
   title: string;
   status: "PASS" | "WARN" | "FAIL" | "UNVERIFIED";
   detail: string;
@@ -425,6 +429,66 @@ export interface Run {
   baseCommit: string | null;
   retryReason: string | null;
   evidence: Evidence[];
+}
+
+export interface ContextCompaction {
+  id: string;
+  subjectType: "CONVERSATION" | "WORK_ORDER";
+  subjectId: string;
+  beforeSequence: number;
+  summary: string;
+  offloadRef: string;
+  createdAt: string;
+}
+
+export type DelegationJobStatus =
+  | "PENDING"
+  | "RUNNING"
+  | "PENDING_RETRY"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLED";
+
+export interface DelegationJob {
+  id: string;
+  parentRunId: string;
+  changeId: string;
+  fromAgentId: string;
+  toAgentId: string;
+  prompt: string;
+  promptHash: string;
+  status: DelegationJobStatus;
+  attempts: number;
+  nextRetryAt: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ConnectorRiskLevel = "READ_ONLY" | "LOW_RISK_WRITE" | "HIGH_RISK_WRITE";
+
+export interface ConnectorDefinition {
+  id: string;
+  name: string;
+  capabilities: string[];
+  riskLevel: ConnectorRiskLevel;
+  requiredApproval: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConnectorInvocation {
+  id: string;
+  connectorId: string;
+  roomId: string;
+  agentId: string | null;
+  action: string;
+  payload: Record<string, unknown>;
+  status: "ALLOWED" | "DENIED" | "FAILED";
+  reason: string | null;
+  idempotencyKey: string;
+  createdAt: string;
 }
 
 export interface OutputContract {
@@ -666,6 +730,10 @@ export interface AppSnapshot {
   memories: MemoryEntry[];
   skills: Skill[];
   skillVersions: SkillVersion[];
+  contextCompactions: ContextCompaction[];
+  delegationJobs: DelegationJob[];
+  connectors: ConnectorDefinition[];
+  connectorInvocations: ConnectorInvocation[];
   workOrders: WorkOrder[];
   deliverables: Deliverable[];
   schedules: Schedule[];
@@ -879,6 +947,18 @@ export interface DesktopApi {
   createSchedule(input: CreateScheduleInput): Promise<Schedule>;
   updateSchedule(id: string, enabled: boolean): Promise<void>;
   testSchedule(scheduleId: string): Promise<WorkOrder>;
+  getContextCompactions(
+    subjectType: "CONVERSATION" | "WORK_ORDER",
+    subjectId: string,
+  ): Promise<ContextCompaction[]>;
+  invokeConnector(input: {
+    connectorId: string;
+    roomId: string;
+    action: string;
+    payload?: Record<string, unknown>;
+    agentId?: string;
+    idempotencyKey?: string;
+  }): Promise<ConnectorInvocation>;
   markNotificationRead(id: string): Promise<void>;
   onRuntimeEvent(listener: (event: RuntimeEvent) => void): () => void;
 }
@@ -965,6 +1045,16 @@ export type RuntimeRequest =
   | { type: "schedule.create"; input: CreateScheduleInput }
   | { type: "schedule.update"; id: string; enabled: boolean }
   | { type: "schedule.testRun"; scheduleId: string }
+  | {
+      type: "connector.invoke";
+      connectorId: string;
+      roomId: string;
+      action: string;
+      payload?: Record<string, unknown>;
+      agentId?: string;
+      idempotencyKey?: string;
+    }
+  | { type: "context.compactions"; subjectType: "CONVERSATION" | "WORK_ORDER"; subjectId: string }
   | { type: "notification.read"; id: string };
 
 export interface RuntimeRequestEnvelope {
