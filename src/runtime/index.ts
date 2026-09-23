@@ -22,6 +22,7 @@ import { WorkspaceManager } from "./workspace-manager";
 import { RuntimeQueue } from "./runtime-queue";
 import { WorkOrderService } from "./work-orders/work-order-service";
 import { ScheduleService } from "./schedules/schedule-service";
+import { evaluateConnectorPolicy } from "./connectors/policy";
 
 interface ParentPort {
   postMessage(message: RuntimeProcessMessage): void;
@@ -48,6 +49,7 @@ let conversationEngine: ConversationEngine;
 let workOrderService: WorkOrderService;
 let scheduleService: ScheduleService;
 let changeTimer: ReturnType<typeof setTimeout> | null = null;
+let delegationTimer: ReturnType<typeof setInterval> | null = null;
 const changed = (): void => {
   if (changeTimer) clearTimeout(changeTimer);
   changeTimer = setTimeout(() => {
@@ -77,6 +79,7 @@ conversationEngine = new ConversationEngine(
     dataDirectory,
   ),
   changed,
+  dataDirectory,
 );
 workOrderService = new WorkOrderService(
   db,
@@ -90,11 +93,16 @@ workOrderService = new WorkOrderService(
 scheduleService = new ScheduleService(db, workOrderService, changed);
 const initialized = registry.detect().then((runtimes) => {
   runManager.setRuntimes(runtimes);
+  void runManager.processDelegationQueue();
+  delegationTimer = setInterval(() => {
+    void runManager.processDelegationQueue();
+  }, 20_000);
   scheduleService.start();
   changed();
 });
 
 process.on("SIGTERM", () => {
+  if (delegationTimer) clearInterval(delegationTimer);
   scheduleService.stop();
   void Promise.all([
     runManager.shutdown(),
@@ -103,6 +111,7 @@ process.on("SIGTERM", () => {
   ]).finally(() => process.exit(0));
 });
 process.on("SIGINT", () => {
+  if (delegationTimer) clearInterval(delegationTimer);
   scheduleService.stop();
   void Promise.all([
     runManager.shutdown(),
@@ -288,6 +297,41 @@ async function dispatch(request: RuntimeRequest): Promise<unknown> {
       return null;
     case "schedule.testRun":
       return scheduleService.testRun(request.scheduleId);
+    case "connector.invoke": {
+      const connector = db
+        .listConnectors()
+        .find((item) => item.id === request.connectorId);
+      const room = db.getRoom(request.roomId);
+      const permissions = request.agentId
+        ? db.getAgent(request.agentId)?.permissions
+        : undefined;
+      const approvalPoints = request.agentId
+        ? db.getAgentProfile(request.agentId)?.approvalPoints
+        : [];
+      const verdict = evaluateConnectorPolicy({
+        connector,
+        room,
+        permissions,
+        approvalPoints,
+      });
+      const invocation = db.recordConnectorInvocation({
+        connectorId: request.connectorId,
+        roomId: request.roomId,
+        agentId: request.agentId ?? null,
+        action: request.action,
+        payload: request.payload ?? {},
+        status: verdict.allowed ? "ALLOWED" : "DENIED",
+        reason: verdict.reason,
+        idempotencyKey:
+          request.idempotencyKey ??
+          `${request.connectorId}:${request.roomId}:${request.action}:${Date.now()}`,
+      });
+      changed();
+      if (!verdict.allowed) throw new Error(verdict.reason ?? "Connector invoke denied");
+      return invocation;
+    }
+    case "context.compactions":
+      return db.listContextCompactions(request.subjectType, request.subjectId);
     case "notification.read":
       db.markNotificationRead(request.id);
       changed();

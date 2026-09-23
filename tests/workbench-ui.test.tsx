@@ -47,7 +47,7 @@ async function input(
 beforeEach(async () => {
   document.body.innerHTML = '<div id="root"></div>';
   localStorage.clear();
-  snapshot = structuredClone(fixture) as AppSnapshot;
+  snapshot = structuredClone(fixture) as unknown as AppSnapshot;
   snapshot.workOrders[0].completedAt = new Date().toISOString();
   api = {
     getSnapshot: vi.fn(async () => snapshot),

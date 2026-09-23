@@ -62,6 +62,10 @@ export default function ConversationRoom({
   const memory = snapshot.conversationMemories.find(
     (item) => item.conversationId === conversation.id,
   );
+  const compactions = snapshot.contextCompactions.filter(
+    (item) =>
+      item.subjectType === "CONVERSATION" && item.subjectId === conversation.id,
+  );
   const deliverables = snapshot.conversationDeliverables.filter(
     (item) => item.conversationId === conversation.id,
   );
@@ -312,6 +316,20 @@ export default function ConversationRoom({
               <MemorySection
                 title="待回答问题"
                 content={memory?.openQuestions.join("\n\n") || "暂无"}
+              />
+              <MemorySection
+                title="压缩快照"
+                content={
+                  compactions.length
+                    ? compactions
+                        .slice(0, 3)
+                        .map(
+                          (item) =>
+                            `#${item.beforeSequence} · ${new Date(item.createdAt).toLocaleString()}\n${item.summary}\n${item.offloadRef}`,
+                        )
+                        .join("\n\n---\n\n")
+                    : "暂无压缩快照"
+                }
               />
             </div>
           </aside>

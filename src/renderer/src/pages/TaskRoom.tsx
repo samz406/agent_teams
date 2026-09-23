@@ -959,6 +959,46 @@ function AgentInspector({
               )}
             </pre>
             <h4>Evidence</h4>
+            {run.evidence.some((item) => item.type === "MANIFEST") && (
+              <details open>
+                <summary>执行清单</summary>
+                <div className="evidence-list">
+                  {run.evidence
+                    .filter((item) => item.type === "MANIFEST")
+                    .map((item) => (
+                      <div key={item.id}>
+                        <span
+                          className={`evidence-status ${item.status.toLowerCase()}`}
+                        >
+                          {statusLabel(item.status)}
+                        </span>
+                        <strong>{item.title}</strong>
+                        <p>{item.detail.slice(0, 1200)}</p>
+                      </div>
+                    ))}
+                </div>
+              </details>
+            )}
+            {run.evidence.some((item) => item.type === "CONTEXT_USAGE") && (
+              <details open>
+                <summary>Context Breakdown</summary>
+                <div className="evidence-list">
+                  {run.evidence
+                    .filter((item) => item.type === "CONTEXT_USAGE")
+                    .map((item) => (
+                      <div key={item.id}>
+                        <span
+                          className={`evidence-status ${item.status.toLowerCase()}`}
+                        >
+                          {statusLabel(item.status)}
+                        </span>
+                        <strong>{item.title}</strong>
+                        <p>{item.detail.slice(0, 1200)}</p>
+                      </div>
+                    ))}
+                </div>
+              </details>
+            )}
             <div className="evidence-list">
               {run.evidence.map((item) => (
                 <div key={item.id}>

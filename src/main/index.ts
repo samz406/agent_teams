@@ -10,6 +10,8 @@ import {
 } from "electron";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import { inspectWorkspace } from "./runtime/git";
 import { RuntimeClient } from "./runtime-client";
@@ -37,6 +39,7 @@ let tray: Tray | null = null;
 let quitting = false;
 const notified = new Set<string>();
 let runtime: RuntimeClient;
+let apiServer: ReturnType<typeof createServer> | null = null;
 const publish = (event: RuntimeEvent): void => {
   const target = window;
   if (target && !target.isDestroyed())
@@ -276,9 +279,136 @@ function registerIpc(): void {
   ipcMain.handle("schedule:test", (_event, scheduleId: string) =>
     runtime.request({ type: "schedule.testRun", scheduleId }),
   );
+  ipcMain.handle(
+    "context:compactions",
+    (
+      _event,
+      subjectType: "CONVERSATION" | "WORK_ORDER",
+      subjectId: string,
+    ) => runtime.request({ type: "context.compactions", subjectType, subjectId }),
+  );
+  ipcMain.handle(
+    "connector:invoke",
+    (
+      _event,
+      input: {
+        connectorId: string;
+        roomId: string;
+        action: string;
+        payload?: Record<string, unknown>;
+        agentId?: string;
+        idempotencyKey?: string;
+      },
+    ) =>
+      runtime.request({
+        type: "connector.invoke",
+        connectorId: input.connectorId,
+        roomId: input.roomId,
+        action: input.action,
+        payload: input.payload,
+        agentId: input.agentId,
+        idempotencyKey: input.idempotencyKey,
+      }),
+  );
   ipcMain.handle("notification:read", (_event, id: string) =>
     runtime.request({ type: "notification.read", id }),
   );
+}
+
+function startLocalHttpApi(): void {
+  if (apiServer) return;
+  const port = Number(process.env.MOXT_HTTP_PORT || "4389");
+  const webhookSecret = process.env.MOXT_WEBHOOK_SECRET || "";
+  apiServer = createServer((req, res) => {
+    void handleApiRequest(req, res, webhookSecret);
+  });
+  apiServer.listen(port, "127.0.0.1");
+}
+
+async function handleApiRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  webhookSecret: string,
+): Promise<void> {
+  try {
+    const url = new URL(req.url || "/", "http://127.0.0.1");
+    if (req.method === "GET" && url.pathname === "/api/snapshot") {
+      return ok(res, await runtime.request<AppSnapshot>({ type: "snapshot.get" }));
+    }
+    if (req.method === "POST" && url.pathname === "/api/change/create") {
+      const input = (await readJson(req)) as CreateChangeInput;
+      return ok(res, await runtime.request({ type: "change.create", input }));
+    }
+    if (req.method === "POST" && url.pathname === "/api/change/kick") {
+      const body = (await readJson(req)) as { changeId: string; reason?: string };
+      return ok(
+        res,
+        await runtime.request({
+          type: "change.kick",
+          changeId: body.changeId,
+          reason: body.reason,
+        }),
+      );
+    }
+    if (req.method === "POST" && url.pathname === "/api/work-order/create") {
+      const input = (await readJson(req)) as CreateWorkOrderInput;
+      return ok(res, await runtime.request({ type: "workOrder.create", input }));
+    }
+    if (req.method === "POST" && url.pathname === "/api/work-order/control") {
+      const body = (await readJson(req)) as {
+        id: string;
+        action: "start" | "pause" | "resume" | "cancel" | "retry";
+      };
+      return ok(
+        res,
+        await runtime.request({ type: "workOrder.control", id: body.id, action: body.action }),
+      );
+    }
+    if (req.method === "POST" && url.pathname === "/api/webhook") {
+      const raw = await readRaw(req);
+      const signature = String(req.headers["x-moxt-signature"] || "");
+      if (!verifyWebhook(raw, signature, webhookSecret)) return fail(res, 401, "Invalid signature");
+      const payload = JSON.parse(raw) as { request: unknown };
+      return ok(res, await runtime.request(payload.request as never));
+    }
+    fail(res, 404, "Not found");
+  } catch (error) {
+    console.error("[local-api] request failed", error);
+    fail(res, 400, "Invalid request");
+  }
+}
+
+function verifyWebhook(raw: string, signature: string, secret: string): boolean {
+  if (!secret) return false;
+  const computed = createHmac("sha256", secret).update(raw).digest("hex");
+  if (!signature) return false;
+  const expected = Buffer.from(computed);
+  const provided = Buffer.from(signature);
+  if (expected.length !== provided.length) return false;
+  return timingSafeEqual(expected, provided);
+}
+
+function ok(res: ServerResponse, value: unknown): void {
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.end(JSON.stringify({ ok: true, result: value }));
+}
+
+function fail(res: ServerResponse, status: number, message: string): void {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.end(JSON.stringify({ ok: false, error: message }));
+}
+
+async function readRaw(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function readJson(req: IncomingMessage): Promise<unknown> {
+  const raw = await readRaw(req);
+  return raw ? JSON.parse(raw) : {};
 }
 
 function createTray(): void {
@@ -320,6 +450,7 @@ app.whenReady().then(() => {
   );
   runtime = new RuntimeClient(app.getPath("userData"), publish);
   registerIpc();
+  startLocalHttpApi();
   createWindow();
   createTray();
   app.on("activate", () => {
@@ -329,6 +460,8 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   quitting = true;
+  apiServer?.close();
+  apiServer = null;
   runtime?.close();
 });
 app.on("window-all-closed", () => {

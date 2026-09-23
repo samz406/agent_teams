@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type {
   Agent,
@@ -19,6 +19,10 @@ import { LeaderEngine } from "./leader-engine";
 import { RuntimeQueue } from "./runtime-queue";
 import { evaluateRoomPermissions, formatRoomContext } from "./room-runtime";
 import { WorkspaceManager } from "./workspace-manager";
+import {
+  buildContextUsageEvidence,
+  buildExecutionManifest,
+} from "./context-observability";
 
 type Publish = (event: RuntimeEvent) => void;
 interface StartOptions {
@@ -62,6 +66,7 @@ export class TeamRunManager {
   private resumeRuns = new Set<string>();
   private runtimes: RuntimeInfo[] = [];
   private evidence = new EvidenceService();
+  private processingDelegation = false;
 
   constructor(
     private db: AppDatabase,
@@ -80,6 +85,48 @@ export class TeamRunManager {
   }
   queueStats(): ReturnType<RuntimeQueue["stats"]> {
     return this.queue.stats();
+  }
+  async processDelegationQueue(): Promise<void> {
+    if (this.processingDelegation) return;
+    this.processingDelegation = true;
+    try {
+      const jobs = this.db.listReadyDelegationJobs();
+      for (const job of jobs) {
+        if (!this.db.markDelegationJobRunning(job.id)) continue;
+        const change = this.db.getChange(job.changeId);
+        const target = this.db.getAgent(job.toAgentId);
+        if (!change || !target) {
+          this.db.failDelegationJob(job.id, "目标任务或Agent不存在", 30_000);
+          continue;
+        }
+        try {
+          const task = this.leader.createTask(change, target, job.prompt, null);
+          this.db.createHandoff({
+            changeId: change.id,
+            fromTaskId: null,
+            fromAgentId: job.fromAgentId,
+            toTaskId: task.id,
+            toAgentId: target.id,
+            deliverable: "Delegated from persisted queue",
+            evidenceIds: [],
+          });
+          await this.start(change.id, target, job.prompt, task, {
+            parentRunId: job.parentRunId,
+            retryReason: "Delegated by queued job",
+          });
+          this.db.completeDelegationJob(job.id);
+        } catch (error) {
+          const attempts = Math.max(1, job.attempts + 1);
+          this.db.failDelegationJob(
+            job.id,
+            error instanceof Error ? error.message : String(error),
+            Math.min(5 * 60_000, 20_000 * 2 ** attempts),
+          );
+        }
+      }
+    } finally {
+      this.processingDelegation = false;
+    }
   }
 
   async ensureCurrentPhase(
@@ -306,6 +353,13 @@ export class TeamRunManager {
       agent.runtime,
     );
     const id = randomUUID();
+    const roomContextPrompt = formatRoomContext({
+      room,
+      context: roomContext,
+      member: roomMember!,
+      permissions: effectivePermissions,
+      skills: roomSkills,
+    });
     const run: Run = {
       id,
       changeId,
@@ -315,13 +369,7 @@ export class TeamRunManager {
       agentSessionId: session.id,
       parentRunId: options.parentRunId ?? null,
       status: "QUEUED",
-      prompt: `${formatRoomContext({
-        room,
-        context: roomContext,
-        member: roomMember!,
-        permissions: effectivePermissions,
-        skills: roomSkills,
-      })}\n\n${prompt}`,
+      prompt: `${roomContextPrompt}\n\n${prompt}`,
       runtime: agent.runtime,
       executable,
       workspacePath: prepared.cwd,
@@ -349,6 +397,28 @@ export class TeamRunManager {
         permissions: effectivePermissions,
       }),
     });
+    this.db.addEvidence(
+      run.id,
+      buildExecutionManifest({
+        runtime: agent.runtime,
+        permissions: effectivePermissions,
+        roomPolicy: room.policy,
+        skills: roomSkills,
+        requiredEvidence: task.requiredEvidence,
+        workspaceId: workspace.id,
+        workspacePath: prepared.cwd,
+        resumeNative: Boolean(options.resumeNative),
+        subject: "CHANGE",
+      }),
+    );
+    this.db.addEvidence(
+      run.id,
+      buildContextUsageEvidence("Change context breakdown", {
+        room_context: roomContextPrompt,
+        skills: roomSkills.map((item) => item.instructions).join("\n\n"),
+        instruction: prompt,
+      }),
+    );
     this.db.updateTask(task.id, "QUEUED", id);
     if (options.resumeNative) this.resumeRuns.add(id);
     this.publish({ type: "run.status", runId: id, status: "QUEUED" });
@@ -711,26 +781,17 @@ export class TeamRunManager {
             change.agentIds.includes(item.id),
         );
       if (!target || target.id === sender.id) continue;
-      const task = this.leader.createTask(
-        change,
-        target,
-        action.prompt,
-        parentRun.taskId,
-      );
-      this.db.createHandoff({
-        changeId: change.id,
-        fromTaskId: parentRun.taskId,
-        fromAgentId: sender.id,
-        toTaskId: task.id,
-        toAgentId: target.id,
-        deliverable: response.slice(0, 4000),
-        evidenceIds: parentRun.evidence.map((item) => item.id),
-      });
-      await this.start(change.id, target, action.prompt, task, {
+      const promptHash = createHash("sha256").update(action.prompt).digest("hex");
+      this.db.createDelegationJob({
         parentRunId: parentRun.id,
-        retryReason: `Delegated by ${sender.name}`,
+        changeId: change.id,
+        fromAgentId: sender.id,
+        toAgentId: target.id,
+        prompt: action.prompt,
+        promptHash,
       });
     }
+    await this.processDelegationQueue();
   }
 
   async shutdown(): Promise<void> {
