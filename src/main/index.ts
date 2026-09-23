@@ -373,7 +373,8 @@ async function handleApiRequest(
     }
     fail(res, 404, "Not found");
   } catch (error) {
-    fail(res, 400, error instanceof Error ? error.message : String(error));
+    console.error("[local-api] request failed", error);
+    fail(res, 400, "Invalid request");
   }
 }
 
